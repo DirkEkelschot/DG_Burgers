@@ -6,11 +6,11 @@
 #include <cstdio>
 #include <stdlib.h>
 #include <vector>
-
+#include <map>
 using namespace std;
 using namespace polylib;
 void CalculateRHS(int np, int nq, int Nel, int P, std::vector<double> zquad, std::vector<double> wquad, std::vector<double> z, double **D, double *Jac, int **map, double *bc, double *X_DG, double *U_DG, double *R_DG);
-void CalculateRHS_v2(int np, int nq, int Nel, int P, std::vector<double> zquad, std::vector<double> wquad, std::vector<double> z, double **D, double *Jac, int **map, double *bc, double *X_DG, double *U_DG, double *R_DG);
+void CalculateRHS_v2(int np, int nq, int Nel, int P, std::vector<double> zquad, std::vector<double> wquad, std::vector<double> z, double **D, double *Jac, int **map, double *bc, double *X_DG, double *U_DG, double *R_DG, double dt);
 void *negatednormals(int Nel, double *n);
 int **iarray(int n,int m);
 std::vector<std::vector<double> > getModalBasis(std::vector<double> zquad, int nq, int np, int P);
@@ -170,6 +170,8 @@ std::vector<double> ForwardTransformLagrange(int P,
     dgemv_(&TR,&ncoeffs,&ncoeffs,&ONE_DOUBLE,MassMatElem.data(),&ncoeffs,Icoeff,&ONE_INT,&ZERO_DOUBLE,coeff.data(),&ONE_INT);
     return coeff;
 }
+
+
 
 std::vector<double> BackwardTransformLagrange(int P, std::vector<double> zquad, std::vector<double> wquad, int nq,  
                         double J, std::vector<double> coeff, std::vector<double> z, int np)
@@ -511,7 +513,7 @@ int main(int argc, char* argv[])
 
         
         // //Calculate Stage 1;
-        CalculateRHS_v2(np, nq, Nel, P, zq, wq, z, D, Jac, map, bc, X_DG, U_DG, R_DG0);
+        CalculateRHS_v2(np, nq, Nel, P, zq, wq, z, D, Jac, map, bc, X_DG, U_DG, R_DG0,dt);
         for(int i=0;i<(Nel*np);i++)
         {
             k1[i] = U_DG[i]+a[0]*dt*R_DG0[i];
@@ -519,42 +521,27 @@ int main(int argc, char* argv[])
         }
         //std::cout << std::endl;
         //Calculate Stage 2;
-        CalculateRHS_v2(np, nq, Nel, P, zq, wq, z, D, Jac, map, bc, X_DG, k1, R_DG1);
+        CalculateRHS_v2(np, nq, Nel, P, zq, wq, z, D, Jac, map, bc, X_DG, k1, R_DG1,dt);
         for(int i=0;i<(Nel*np);i++)
         {
             k2[i] = U_DG[i]+a[1]*dt*R_DG1[i];
         }
         //std::cout << std::endl;
         //Calculate Stage 3;
-        CalculateRHS_v2(np, nq, Nel, P, zq, wq, z, D, Jac, map, bc, X_DG, k2, R_DG2);
+        CalculateRHS_v2(np, nq, Nel, P, zq, wq, z, D, Jac, map, bc, X_DG, k2, R_DG2,dt);
         for(int i=0;i<(Nel*np);i++)
         {
             k3[i] = U_DG[i]+a[2]*dt*R_DG2[i];
         }
         //Calculate Stage 4;
-        CalculateRHS_v2(np, nq, Nel, P, zq, wq, z, D, Jac, map, bc, X_DG, k3, R_DG3);
+        CalculateRHS_v2(np, nq, Nel, P, zq, wq, z, D, Jac, map, bc, X_DG, k3, R_DG3,dt);
         for(int i=0;i<(Nel*np);i++)
         {
             k4[i] = U_DG[i]+a[3]*dt*R_DG3[i];
             U_DG[i] = k4[i];
         } 
-        
-        
-
-        
-
-        // double value = std::ceil(time * 100.0) / 100.0;
-        // solout.open("dgdata"+std::to_string(value)+".out");
-        // for(int i = 0;i < (Nel*np);i++)
-        // {
-        //     solout << X_DG[i] << " " << U_DG_new[i] << endl;
-        // }
-        // solout.close();
-
-        
-
-        
-
+    
+    
         bc[0]=U_DG[Nel*(np)-1];
         bc[1]=U_DG[0];
         std::cout << "time = " << time << std::endl;
@@ -618,7 +605,7 @@ void InnerProductWRTDerivLagrangeBasis(int np, int P, double J, std::vector<doub
 }
 // void CalculateRHS_v2(int np, int Nel, int P, double *z, double *w, double **D, double *Jac, int **map, double *bc, double *X_DG, double *U_DG, double *R_DG)
 
-void CalculateRHS_v2(int np, int nq, int Nel, int P, std::vector<double> zquad, std::vector<double> wquad, std::vector<double> z, double **D, double *Jac, int **map, double *bc, double *X_DG, double *U_DG, double *R_DG)
+void CalculateRHS_v2(int np, int nq, int Nel, int P, std::vector<double> zquad, std::vector<double> wquad, std::vector<double> z, double **D, double *Jac, int **map, double *bc, double *X_DG, double *U_DG, double *R_DG, double dt)
 {
     unsigned char TRANS = 'T';
     int NRHS=1,INFO,*ipiv,ONE_INT=1;
@@ -652,9 +639,16 @@ void CalculateRHS_v2(int np, int nq, int Nel, int P, std::vector<double> zquad, 
     }
     // Transform fluxes forward into coefficient space.
     //==========================================================
+    std::vector<double> dx(Nel);
     for(int eln=0;eln<Nel;eln++)
     {
         double J = Jac[eln];
+
+        double xstart = X_DG[eln*np];
+        double xend   = X_DG[eln*np+np-1];
+
+        dx[eln] = xend-xstart; 
+        std::cout << eln << " " << dx[eln] << std::endl;
         for(int i = 0;i < np;i++)
         {
             quad_e[i] = F_DG[i+eln*np];
@@ -691,35 +685,17 @@ void CalculateRHS_v2(int np, int nq, int Nel, int P, std::vector<double> zquad, 
     double *FtRn      = dvector(Nel+1);
     double *FLUX      = dvector(Nel+1);
     cnt = 0;
-    int nL = 1;int nR=-1;
+    int nL = -1;int nR=1;
     for(int i = 0;i < (Nel+1);i++)
     {
         
         FtLn[i]      =  nL*(UtL[i]*UtL[i])*0.5;
         FtRn[i]      =  nR*(UtR[i]*UtR[i])*0.5;
-        
-        alphaL[i]   = 2.0*(UtL[i]);
-        alphaR[i]   = 2.0*(UtR[i]);
-        
-        FLUX[i]     = 0.5*(FtLn[i]+FtRn[i])-0.5*max(fabs(alphaL[i]),fabs(alphaR[i]))*(UtR[i]-UtL[i]);
-        /*if((UtR[i]-UtL[i])!=0.0)
-        {
-            alpha[i] = (FtLn[i]-FtRn[i])/(nR*UtR[i]-nL*UtL[i]);
-        }
-        else
-        {
-            alpha[i] = 0.0;
-        }
-        
-        if(alpha[i]>=0.0)
-        {
-            FLUX[i] = FtLn[i];
-        }
-        else
-        {
-            FLUX[i] = FtRn[i];
-        }
-        cout << alpha[i] << endl;*/
+
+        alphaL[i]   = (UtL[i]);
+        alphaR[i]   = (UtR[i]);
+        // std::cout << "UtL[i] vs UtR[i] " << UtL[i] << " " << UtR[i] << std::endl;
+        FLUX[i]     = 0.5*(FtLn[i]+FtRn[i])-max(fabs(alphaL[i]),fabs(alphaR[i]))*(UtR[i]-UtL[i]);
     }
     double *numcoeff = dvector(Mdim);
     cnt = 0;
@@ -729,26 +705,40 @@ void CalculateRHS_v2(int np, int nq, int Nel, int P, std::vector<double> zquad, 
         numcoeff[i] = 0.0;
     }
     
+    std::map<int,std::vector<double> > element2flux;
+    std::vector<double> flux_res(Nel);
+    std::cout << std::endl;
     for(int i = 0;i < Nel;i++)
     {
+        element2flux[i].push_back(i);
+        element2flux[i].push_back(i+1);
+        
+        flux_res[i] = FLUX[i+1]-FLUX[i];
+        std::cout << "flux_res[i] " << flux_res[i] << std::endl;
         if(i == 0)
         {
-            numcoeff[0] = -Jac[i]*FLUX[0];
-            numcoeff[P] =  Jac[i]*FLUX[1];
+            numcoeff[0] = -FLUX[0];
+            numcoeff[P] =  FLUX[1];
         }
         else if(i == Nel-1)
         {
-            numcoeff[(Nel-1)*(P+1)]   = -Jac[i]*FLUX[i];
-            numcoeff[Nel*(P+1)-1    ] =  Jac[i]*FLUX[i+1];
+            numcoeff[(Nel-1)*(P+1)]   = -FLUX[i];
+            numcoeff[Nel*(P+1)-1    ] =  FLUX[i+1];
         }
         else
         {
-            numcoeff[i*(P+1)]     = -Jac[i]*FLUX[i];
-            numcoeff[i*(P+1)+P]   =  Jac[i]*FLUX[i+1];
+            numcoeff[i*(P+1)]     = -FLUX[i];
+            numcoeff[i*(P+1)+P]   =  FLUX[i+1];
         }
     }
-
-    
+    std::cout << std::endl;
+    std::cout << "begin " << std::endl;
+    for(int i = 0;i<Mdim;i++)
+    {
+        std::cout << numcoeff[i] << std::endl;
+    }
+    std::cout << "end " << std::endl;
+    std::cout << std::endl;
     //for(int i = 0;i<Mdim;i++)
     //{
     //   cout<< numcoeff[i] <<endl;
@@ -756,7 +746,7 @@ void CalculateRHS_v2(int np, int nq, int Nel, int P, std::vector<double> zquad, 
     //cout << endl;
     // HACK FOR 3 ELEMENTS;
     /*numcoeff[0] =     -Jac[0]*FLUX[0];
-    numcoeff[P] =      Jac[0]*FLUX[1];
+    numcoeff[P]   =      Jac[0]*FLUX[1];
     
     //numcoeff[(Nel-3)*(P+1)]   =     numf[1];
     //numcoeff[(Nel-3)*(P+1)+P] =     numf[3];
@@ -807,203 +797,6 @@ void CalculateRHS_v2(int np, int nq, int Nel, int P, std::vector<double> zquad, 
     }
 }
 
-
-
-
-void CalculateRHS(int np, int nq, int Nel, int P, std::vector<double> zquad, std::vector<double> wquad, std::vector<double> z, double **D, double *Jac, int **map, double *bc, double *X_DG, double *U_DG, double *R_DG)
-{
-    unsigned char TRANS = 'T';
-    int NRHS=1,INFO,*ipiv,ONE_INT=1;
-    double ZERO_DOUBLE=0.0,ONE_DOUBLE=1.0;
-    
-    int Mdim                        = (P+1)*Nel;
-    double *F_DG                    = dvector(Nel*np);
-    std::vector<double> quad_e(np,0.0);
-    ipiv                            = ivector(Mdim);
-    std::vector<double> coeff_e(P+1);
-    double *tmp                     = dvector(Mdim);
-    double *Fcoeff                  = dvector(Mdim);
-    double *Ucoeff                  = dvector(Mdim);
-    double **MassMatGlobal          = dmatrix(Mdim);
-    double **StiffnessMatGlobal     = dmatrix(Mdim);
-    double *numfluxcoeffL  = dvector(Mdim);
-    double *numfluxcoeffR  = dvector(Mdim);
-    double *numfluxcoeff   = dvector(Mdim);
-    double *du      = dvector(2);
-    double* phi1 = dvector(np);
-    
-    for(int eln=0;eln<Nel;eln++)
-    {
-        for(int i=0;i<np;i++)
-        {
-            // Evaluate the flux at each quadrature point.
-            F_DG    [i + eln*np] = 0.5*U_DG[i + eln*np]*U_DG[i + eln*np];
-            //std::cout << "U_DG[i + eln*np] " << U_DG[i + eln*np] << std::endl;
-        }
-    }
-    // Transform fluxes forward into coefficient space.
-    //==========================================================
-    double *Fwd = dvector(2);
-    double *Bwd = dvector(2);
-    std::vector<double> FtLn(2,0);
-    std::vector<double> FtRn(2,0);
-
-    std::vector<double> alphaL(2,0);
-    std::vector<double> alphaR(2,0);
-    int nL = 1;
-    int nR = -1;
-    for(int eln=0;eln<Nel;eln++)
-    {
-        double J = Jac[eln];
-        for(int i = 0;i < np;i++)
-        {
-            quad_e[i] = F_DG[i+eln*np];
-        }
-
-        std::vector<double> coeff_new(P+1,0.0);
-
-        InnerProductWRTDerivLagrangeBasis(np, P, J, wquad, zquad, z, D, quad_e, coeff_new);
-
-        GetFwdBwd(eln, Nel, np, bc, U_DG, Fwd, Bwd);
-
-        double FluxFwd0         = Fwd[0]*Fwd[0]*0.5;
-        double FluxFwd1         = Fwd[1]*Fwd[1]*0.5;
-
-        double FluxBwd0         = Bwd[0]*Bwd[0]*0.5;
-        double FluxBwd1         = Bwd[1]*Bwd[1]*0.5;
-
-        FtLn[0]                 = nL*(FluxFwd0*FluxFwd0)*0.5;
-        FtRn[0]                 = nR*(FluxBwd0*FluxBwd0)*0.5;
-
-        FtLn[1]                 = nL*(FluxFwd1*FluxFwd1)*0.5;
-        FtRn[1]                 = nR*(FluxBwd1*FluxBwd1)*0.5;
-        
-        alphaL[0]               = 2.0*(FluxFwd0);
-        alphaR[0]               = 2.0*(FluxBwd0);
-
-        alphaL[1]               = 2.0*(FluxFwd1);
-        alphaR[1]               = 2.0*(FluxBwd1);
-        //Lax Friedrichs
-        double num_fluxLeft     = 0.5*(FtLn[0]+FtRn[0])
-                                -0.5*max(fabs(alphaL[0]),fabs(alphaR[0]))*(Bwd[0]-Fwd[0]);
-
-        double num_fluxRight    = 0.5*(FtLn[1]+FtRn[1])
-                                -0.5*max(fabs(alphaL[1]),fabs(alphaR[1]))*(Bwd[1]-Fwd[1]);
-
-        std::vector<double> coeff_e = ForwardTransformLagrange(P, zquad, wquad, nq, J, quad_e, np);
-        int Pf = P-1;
-
-        // std::vector<double> coeffs_filtered = FilterNodalCoeffs(zquad, wquad, z, np, nq, coeff_e, P, Pf, J);
-
-        for(int i = 0;i < (P+1);i++)
-        {
-            // Fcoeff[i+eln*(P+1)] = coeff_e[i];
-            Fcoeff[i+eln*(P+1)] = coeff_new[i];
-            //std::cout << "coeff_new " << i << " " << coeff_new[i] << std::endl;
-        }
-        coeff_new.clear();
-    }
-    //==========================================================
-    // Calculate the numerical flux;
-    double *quads = dvector(np);
-    
-    double *n        = dvector(Nel*2);
-    double *UtL      = dvector(Nel*2);
-    double *UtR      = dvector(Nel*2);
-    double *numfluxL = dvector(Nel*2);
-    double *numfluxR = dvector(Nel*2);
-    double *numf = dvector(Nel*2);
-    
-    negatednormals(Nel, n);
-    int cnt = 0;
-    
-    double *alpha     = dvector(Nel+1);
-    double *alphaLv2    = dvector(Nel+1);
-    double *alphaRv2    = dvector(Nel+1);
-    double *FtLnv2      = dvector(Nel+1);
-    double *FtRnv2      = dvector(Nel+1);
-    double *FLUX      = dvector(Nel+1);
-    cnt = 0;
-
-
-
-    std::vector<double> UL(Nel+1,0.0);
-    std::vector<double> UR(Nel+1,0.0);
-
-    GetAllFwdBwd(Nel,np,bc,U_DG, UL, UR);
-
-    for(int i = 0;i < (Nel+1);i++)
-    {
-        //GetFwdBwd(i, Nel, np, bc, U_DG, Fwd, Bwd);
-        //std::cout << "UtL[i]*UtL[i] " << UtL[i]*UtL[i] << std::endl;
-        FtLnv2[i]      =  nL*(UL[i]*UL[i])*0.5;
-        FtRnv2[i]      =  nR*(UR[i]*UR[i])*0.5;
-        
-        alphaLv2[i]    = 2.0*(UL[i]);
-        alphaRv2[i]    = 2.0*(UR[i]);
-        //Lax Friedrichs
-        FLUX[i]      = 0.5*(FtLnv2[i]+FtRnv2[i])-0.5*max(fabs(alphaLv2[i]),fabs(alphaRv2[i]))*(UR[i]-UL[i]);
-    }
-
-    double *numcoeff = dvector(Mdim);
-    cnt = 0;
-    
-    for(int i = 0;i<Mdim;i++)
-    {
-        numcoeff[i] = 0.0;
-    }
-    
-    for(int i = 0;i < Nel;i++)
-    {
-        if(i == 0)
-        {
-            numcoeff[0] = -Jac[i]*FLUX[0];
-            numcoeff[P] =  Jac[i]*FLUX[1];
-        }
-        else if(i == Nel-1)
-        {
-            numcoeff[(Nel-1)*(P+1)]   = -Jac[i]*FLUX[i];
-            numcoeff[Nel*(P+1)-1    ] =  Jac[i]*FLUX[i+1];
-        }
-        else
-        {
-            numcoeff[i*(P+1)]     = -Jac[i]*FLUX[i];
-            numcoeff[i*(P+1)+P]   =  Jac[i]*FLUX[i+1];
-        }
-    }
-
-    //GetGlobalStiffnessMatrix(Nel, P, np, nq, zquad, wquad, z, D, Jac, map, Mdim, StiffnessMatGlobal);
-    
-    //dgemv_(&TRANS,&Mdim,&Mdim,&ONE_DOUBLE,StiffnessMatGlobal[0],&Mdim,Fcoeff,&ONE_INT,&ZERO_DOUBLE,tmp,&ONE_INT);
-    
-    for(int i = 0;i < Mdim; i++)
-    {
-        // Ucoeff[i] = -tmp[i]-numcoeff[i];
-        Ucoeff[i] = -Fcoeff[i]+numcoeff[i];
-    }
-    
-    GetGlobalMassMatrix(Nel, P, np, nq, zquad, wquad, z, Jac, map, Mdim, MassMatGlobal);
-    dgetrf_(&Mdim, &Mdim, MassMatGlobal[0], &Mdim, ipiv, &INFO);
-    dgetrs_(&TRANS, &Mdim, &NRHS, MassMatGlobal[0], &Mdim, ipiv, Ucoeff, &Mdim, &INFO);
-    
-    // Transform back onto quadrature points.
-    for(int eln=0;eln<Nel;eln++)
-    {
-        double J  = Jac[eln];
-
-        for(int i = 0;i<(P+1);i++)
-        {
-            coeff_e[i] = Ucoeff[i+eln*(P+1)];
-        }
-
-        std::vector<double> quad_e = BackwardTransformLagrange(P, zquad, wquad, nq, J, coeff_e, z, np);
-
-        for(int i = 0;i < np;i++)
-        {
-            R_DG[i+np*eln] = quad_e[i];
-        }
-    }
-}
 
 
 void *negatednormals(int Nel, double *n)
