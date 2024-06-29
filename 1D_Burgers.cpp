@@ -301,24 +301,7 @@ std::vector<std::vector<double> > getModalBasis(std::vector<double> zquad, int n
 }
 
 
-std::vector<std::vector<double> > getRadauMinusBasisEvalV2(std::vector<double> zquad_eval, std::vector<double> zquad, int nq, int np, int P)
-{
 
-   
-    int numModes = P + 1;
-
-    std::vector<std::vector<double> > basis;
-    
-    for(int n=0;n<numModes;n++)
-    {   
-        std::vector<double> phi1(np,0.0);
-
-        jacobfd(np, zquad.data(), phi1.data(), NULL, n-1, 1.0, 1.0);
-        
-        basis.push_back(phi1);
-    }
-    return basis;
-}
 
 
 
@@ -372,7 +355,7 @@ std::vector<std::vector<double> > getLegendreBasisEval(std::vector<double> zquad
 {
 
    
-int numModes = P + 1;
+    int numModes = P + 1;
 
     std::vector<std::vector<double> > basis;
     
@@ -414,23 +397,35 @@ int numModes = P + 1;
 std::vector<std::vector<double> > getRadauPlusBasisEval(std::vector<double> zquad_eval, std::vector<double> zquad, int nq, int np, int P)
 {
 
-   
-    if(nq != zquad.size())
-    {
-        std::cout << "error: nq != zquad.size() " << std::endl;
-    }
     int numModes = P + 1;
-
 
     std::vector<std::vector<double> > basis;
     
     for(int n=0;n<numModes;n++)
-    {
-        std::vector<double> phi1(nq);
-        for (int q = 0; q < nq; ++q)
+    {   
+        std::vector<double> phi1(zquad_eval.size(),0.0);
+
+        if(n == 0)
         {
-            phi1[q] = hgrlp(n, zquad_eval[q], zquad.data(), numModes);
+            jacobfd(np, zquad.data(), phi1.data(), NULL, 1, 0.0, 0.0);
+            for(int k=0;k<zquad_eval.size();k++)
+            {
+                phi1[k] = 0.0;
+            }
         }
+        else
+        {
+            std::vector<double> phi2(zquad_eval.size(),0.0);
+
+            jacobfd(np, zquad.data(), phi1.data(), NULL, n, 0.0, 0.0);
+            jacobfd(np, zquad.data(), phi2.data(), NULL, n-1, 0.0, 0.0);
+
+            for(int k=0;k<zquad_eval.size();k++)
+            {
+                phi1[k] = 0.5*(phi1[k] + phi2[k]);
+            }
+        }
+        
         basis.push_back(phi1);
     }
     return basis;
@@ -441,26 +436,40 @@ std::vector<std::vector<double> > getRadauMinusBasisEval(std::vector<double> zqu
 {
 
    
-    if(nq != zquad.size())
-    {
-        std::cout << "error: nq != zquad.size() " << std::endl;
-    }
     int numModes = P + 1;
-
 
     std::vector<std::vector<double> > basis;
     
     for(int n=0;n<numModes;n++)
-    {
-        std::vector<double> phi1(zquad_eval.size());
-        for (int q = 0; q < zquad_eval.size(); ++q)
+    {   
+        std::vector<double> phi1(zquad_eval.size(),0.0);
+
+        if(n == 0)
         {
-            phi1[q] = hgrlm(n, zquad_eval[q], zquad.data(), numModes);
+            jacobfd(np, zquad.data(), phi1.data(), NULL, 1, 0.0, 0.0);
+            for(int k=0;k<zquad_eval.size();k++)
+            {
+                phi1[k] = 0.0;
+            }
         }
+        else
+        {
+            std::vector<double> phi2(zquad_eval.size(),0.0);
+
+            jacobfd(np, zquad.data(), phi1.data(), NULL, n, 0.0, 0.0);
+            jacobfd(np, zquad.data(), phi2.data(), NULL, n-1, 0.0, 0.0);
+
+            for(int k=0;k<zquad_eval.size();k++)
+            {
+                phi1[k] = pow(-1, n)*0.5*(phi1[k] - phi2[k]);
+            }
+        }
+        
         basis.push_back(phi1);
     }
     return basis;
 }
+
 
 
 
@@ -764,40 +773,6 @@ int main(int argc, char* argv[])
             std::cout << "Nodal basis Fwd and Bwd test FAILED :: L2norm =" << L2norm << std::endl; 
         }
 
-        
-
-        std::cout << "Running Gauss-Radau-Legendre Minus " << std::endl;
-
-        ofstream solout2;
-        solout2.open("radaum_basis.out");
-
-        std::vector<double> zradaum(np,0.0);
-        std::vector<double> wradaum(np,0.0);
-        zwgrjm(zradaum.data(), wradaum.data(), np, 0.0, 0.0);
-
-        std::vector<double> zradaumplot(10*np,0.0);
-        std::vector<double> wradaumplot(10*np,0.0);
-        zwgrjm(zradaumplot.data(), wradaumplot.data(), 10*np, 0.0, 0.0);
-        std::vector<std::vector<double> > basisradau_plot = getRadauMinusBasisEval(zradaumplot, zradaum, nq, np, P);
-
-        //std::vector<std::vector<double> > basisradau_plot = getRadauMinusBasisEvalV2(zradaumplot, zradaum, nq, 10*np, P);
-        
-        for(int i=0;i<basisradau_plot.size();i++)
-        {   
-            std::cout << "basisradau_plot[i].size() " << basisradau_plot[i].size() << "  " << zradaumplot.size() << std::endl;
-            for(int j=0;j<basisradau_plot[i].size();j++)
-            {
-                 solout2 << zradaumplot[j] << " " << basisradau_plot[i][j] << endl;
-            }
-        }
-
-        solout2.close();
-
-
-
-
-
-
     }
     
     if (modal == 1)
@@ -827,9 +802,94 @@ int main(int argc, char* argv[])
 
         solout.close();
 
-        basis_m = getModalBasis(z, nq, np, P);
+        basis_m = getLegendreBasisEval(z, z, nq, np, P);
 
         chi(np, 0, x, z.data(), Jac, bound);
+
+        std::vector<double> MassMatElem = GetElementMassMatrix(P,basis_m,w,Jac[0]);
+
+        std::cout << "M=[";
+        for(int i=0;i<P+1;i++)
+        {
+            std::cout << "[";
+            for(int j=0;j<P+1;j++)
+            {
+                if(j<P)
+                {
+                    std::cout << MassMatElem[i*(P+1)+j] << ", ";
+                }
+                else
+                {
+                    std::cout << MassMatElem[i*(P+1)+j];
+                }
+                
+            }
+            if(i<P)
+            {
+                std::cout <<"],"<< std::endl;
+            }
+            else
+            {
+                std::cout <<"]]"<< std::endl;
+            }
+            
+        }
+
+
+        std::cout << "Running Gauss-Radau-Legendre Minus " << std::endl;
+
+        ofstream solout2;
+        solout2.open("radaum_basis.out");
+
+        std::vector<double> zradaum(np,0.0);
+        std::vector<double> wradaum(np,0.0);
+        zwgrjm(zradaum.data(), wradaum.data(), np, 0.0, 0.0);
+
+        std::vector<double> zradaumplot(10*np,0.0);
+        std::vector<double> wradaumplot(10*np,0.0);
+        zwgrjm(zradaumplot.data(), wradaumplot.data(), 10*np, 0.0, 0.0);
+        std::vector<std::vector<double> > basisradaum_plot = getRadauMinusBasisEval(zradaumplot, zradaumplot, nq, zradaumplot.size(), P);
+
+        //std::vector<std::vector<double> > basisradau_plot = getRadauMinusBasisEvalV2(zradaumplot, zradaum, nq, 10*np, P);
+        
+        for(int i=0;i<basisradaum_plot.size();i++)
+        {   
+            std::cout << "basisradaum_plot[i].size() " << basisradaum_plot[i].size() << "  " << zradaumplot.size() << std::endl;
+            for(int j=0;j<basisradaum_plot[i].size();j++)
+            {
+                 solout2 << zradaumplot[j] << " " << basisradaum_plot[i][j] << endl;
+            }
+        }
+
+        solout2.close();
+
+
+        ofstream solout3;
+        solout3.open("radaup_basis.out");
+
+        std::vector<double> zradaup(np,0.0);
+        std::vector<double> wradaup(np,0.0);
+        zwgrjp(zradaup.data(), wradaup.data(), np, 0.0, 0.0);
+
+        std::vector<double> zradaupplot(10*np,0.0);
+        std::vector<double> wradaupplot(10*np,0.0);
+        zwgrjp(zradaupplot.data(), wradaupplot.data(), 10*np, 0.0, 0.0);
+        std::vector<std::vector<double> > basisradaup_plot = getRadauPlusBasisEval(zplot, zplot, nq, zplot.size(), P);
+
+        //std::vector<std::vector<double> > basisradau_plot = getRadauMinusBasisEvalV2(zradaumplot, zradaum, nq, 10*np, P);
+        
+        for(int i=0;i<basisradaup_plot.size();i++)
+        {   
+            std::cout << "basisradaup_plot[i].size() " << basisradaup_plot[i].size() << "  " << zradaumplot.size() << std::endl;
+            for(int j=0;j<basisradaup_plot[i].size();j++)
+            {
+                 solout3 << zradaumplot[j] << " " << basisradaup_plot[i][j] << endl;
+            }
+        }
+
+        solout3.close();
+        
+
 
         for(int i=0;i<np;i++)
         {
@@ -1126,10 +1186,10 @@ void CalculateRHS(int np, int nq, int Nel, int P, std::vector<double> zquad, std
         // {
         //     std::cout << "FLUX " << F_Corr_L[j] << " " << F_Corr_R[j] << std::endl;
         // }
-        for(int j=0;j<coeff_e_L.size();j++)
-        {
-            std::cout << "coeff " << coeff_e_L[i] << " " << coeff_e_R[i] << " " << numcoeff[i*(P+1)+j] << std::endl;
-        }
+        // for(int j=0;j<coeff_e_L.size();j++)
+        // {
+        //     std::cout << "coeff " << coeff_e_L[i] << " " << coeff_e_R[i] << " " << numcoeff[i*(P+1)+j] << std::endl;
+        // }
     }
 
     GetGlobalStiffnessMatrixNew(Nel, P, wquad, D, Jac, map, Mdim, basis, StiffnessMatGlobal);
@@ -1140,7 +1200,7 @@ void CalculateRHS(int np, int nq, int Nel, int P, std::vector<double> zquad, std
     {
         Ucoeff[i] = -tmp[i]+numcoeff[i];
 
-        std::cout << "numcoeff["<<i<<"]="<<numcoeff[i]<<std::endl;
+        // std::cout << "numcoeff["<<i<<"]="<<numcoeff[i]<<std::endl;
     }
     std::cout << std::endl;
     GetGlobalMassMatrixNew(Nel, P, wquad, Jac, map, Mdim, basis, MassMatGlobal);
