@@ -50,6 +50,13 @@ for i in range(0,(P+1)):
     for j in range(0,offset):
         sum[j] = sum[j] + modal[i*offset+j,1]
 
+
+plt.figure(1010)
+for i in range(0,(P+1)):
+    # sum = sum + nodal[i*(P+1):(i+1)*(P+1),1]
+    
+    plt.plot(modal[i*offset:(i+1)*offset,0],modal[i*offset:(i+1)*offset,2]*1.0/20.0)
+
 # print(sum)
 # plt.plot(modal[0:offset,0],sum,'r')
 
@@ -93,6 +100,15 @@ for i in range(0,(P+1)):
     for j in range(0,offset):
         sum[j] = sum[j] + radau[i*offset+j,1]
 
+plt.figure(2020)
+for i in range(0,(P+1)):
+    # sum = sum + nodal[i*(P+1):(i+1)*(P+1),1]
+    
+    plt.plot(radau[i*offset:(i+1)*offset,0],radau[i*offset:(i+1)*offset,2],label='R'+str(i))
+
+    for j in range(0,offset):
+        sum[j] = sum[j] + radau[i*offset+j,1]
+
 # print(sum)
 # plt.plot(radau[0:offset,0],sum,'r')
 plt.legend()
@@ -102,12 +118,13 @@ plt.legend()
 radau = np.loadtxt('radaup_basis.out')
 offset = 10*(P+1)
 sum = np.zeros((offset,1))
+zeros = np.zeros((offset,1))
 plt.figure(21)
 for i in range(0,(P+1)):
     # sum = sum + nodal[i*(P+1):(i+1)*(P+1),1]
     
     plt.plot(radau[i*offset:(i+1)*offset,0],radau[i*offset:(i+1)*offset,1],label='R'+str(i))
-
+    plt.plot(radau[i*offset:(i+1)*offset,0],zeros,'ok')
     for j in range(0,offset):
         sum[j] = sum[j] + radau[i*offset+j,1]
 

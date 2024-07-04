@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <math.h>
 #include "src/Polylib.h"
+#include "src/basis_functions.h"
 #include <fstream>
 #include <cstdio>
 #include <stdlib.h>
@@ -14,13 +15,13 @@ void CalculateRHS(int np, int nq, int Nel, int P, std::vector<double> zquad, std
 void *negatednormals(int Nel, double *n);
 int **iarray(int n,int m);
 std::vector<std::vector<double> > getNodalBasis(std::vector<double> zquad, int nq, int np, int P);
-std::vector<std::vector<double> > getNodalBasisEval(std::vector<double> zquad_eval,std::vector<double> zquad, int nq, int np, int P);
+//std::vector<std::vector<double> > getNodalBasisEval(std::vector<double> zquad_eval,std::vector<double> zquad, int nq, int np, int P);
 std::vector<std::vector<double> > getModalBasis(std::vector<double> zquad, int nq, int np, int P);
-std::vector<std::vector<double> > getModalBasisEval(std::vector<double> zquad_eval, std::vector<double> zquad, int nq, int np, int P);
-std::vector<std::vector<double> > getLegendreBasisEval(std::vector<double> zquad_eval, std::vector<double> zquad, int nq, int np, int P);
+//std::vector<std::vector<double> > getModalBasisEval(std::vector<double> zquad_eval, std::vector<double> zquad, int nq, int np, int P);
+//std::vector<std::vector<double> > getLegendreBasisEval(std::vector<double> zquad_eval, std::vector<double> zquad, int nq, int np, int P);
 
-std::vector<std::vector<double> > getRadauPlusBasisEval(std::vector<double> zquad_eval, std::vector<double> zquad, int nq, int np, int P);
-std::vector<std::vector<double> > getRadauMinusBasisEval(std::vector<double> zquad_eval, std::vector<double> zquad, int nq, int np, int P);
+//std::vector<std::vector<double> > getRadauPlusBasisEval(std::vector<double> zquad_eval, std::vector<double> zquad, int nq, int np, int P);
+//std::vector<std::vector<double> > getRadauMinusBasisEval(std::vector<double> zquad_eval, std::vector<double> zquad, int nq, int np, int P);
 void GetFwdBwd(int eln, int Nel, int np, double *bc, double *quad, double *UtL, double *UtR);
 void GetAllFwdBwd(int Nel, int np, double *bc, double *quad, std::vector<double> &UtL, std::vector<double> &UtR);
 void TraceMap(int np, int Nel, int **trace);
@@ -305,170 +306,170 @@ std::vector<std::vector<double> > getModalBasis(std::vector<double> zquad, int n
 
 
 
-std::vector<std::vector<double> > getModalBasisEval(std::vector<double> zquad_eval, std::vector<double> zquad, int nq, int np, int P)
-{
+// std::vector<std::vector<double> > getModalBasisEval(std::vector<double> zquad_eval, std::vector<double> zquad, int nq, int np, int P)
+// {
 
    
-    int numModes = P + 1;
+//     int numModes = P + 1;
 
-    std::vector<std::vector<double> > basis;
+//     std::vector<std::vector<double> > basis;
     
-    for(int n=0;n<numModes;n++)
-    {   
-        std::vector<double> phi1(np,0.0);
+//     for(int n=0;n<numModes;n++)
+//     {   
+//         std::vector<double> phi1(np,0.0);
 
-        if(n == 0)
-        {
-            for(int k=0;k<np;k++)
-            {
-                phi1[k] = (1 - zquad[k])/2;
-            }
-        }
-        else if(n == P)
-        {
-            for(int k=0;k<np;k++)
-            {
-                phi1[k] = (1 + zquad[k])/2;
-            }
-        }
-        else
-        {
-            jacobfd(np, zquad.data(), phi1.data(), NULL, n-1, 1.0, 1.0);
+//         if(n == 0)
+//         {
+//             for(int k=0;k<np;k++)
+//             {
+//                 phi1[k] = (1 - zquad[k])/2;
+//             }
+//         }
+//         else if(n == P)
+//         {
+//             for(int k=0;k<np;k++)
+//             {
+//                 phi1[k] = (1 + zquad[k])/2;
+//             }
+//         }
+//         else
+//         {
+//             jacobfd(np, zquad.data(), phi1.data(), NULL, n-1, 1.0, 1.0);
 
-            for(int k=0;k<np;k++)
-            {
-                phi1[k] = ((1-zquad[k])/2)*((1+zquad[k])/2)*phi1[k];
-            }
-        }
+//             for(int k=0;k<np;k++)
+//             {
+//                 phi1[k] = ((1-zquad[k])/2)*((1+zquad[k])/2)*phi1[k];
+//             }
+//         }
         
-        basis.push_back(phi1);
-    }
-    return basis;
-}
+//         basis.push_back(phi1);
+//     }
+//     return basis;
+// }
 
 
 
 
 
 
-std::vector<std::vector<double> > getLegendreBasisEval(std::vector<double> zquad_eval, std::vector<double> zquad, int nq, int np, int P)
-{
+// std::vector<std::vector<double> > getLegendreBasisEval(std::vector<double> zquad_eval, std::vector<double> zquad, int nq, int np, int P)
+// {
 
    
-    int numModes = P + 1;
+//     int numModes = P + 1;
 
-    std::vector<std::vector<double> > basis;
+//     std::vector<std::vector<double> > basis;
     
-    for(int n=0;n<numModes;n++)
-    {   
-        std::vector<double> phi1(np,0.0);
+//     for(int n=0;n<numModes;n++)
+//     {   
+//         std::vector<double> phi1(np,0.0);
 
-        if(n == 0)
-        {
-            for(int k=0;k<np;k++)
-            {
-                phi1[k] = 1.0;
-            }
-        }
-        else if(n == 1)
-        {
-            for(int k=0;k<np;k++)
-            {
-                phi1[k] = zquad[k];
-            }
-        }
-        else
-        {
-            jacobfd(np, zquad.data(), phi1.data(), NULL, n, 0.0, 0.0);
+//         if(n == 0)
+//         {
+//             for(int k=0;k<np;k++)
+//             {
+//                 phi1[k] = 1.0;
+//             }
+//         }
+//         else if(n == 1)
+//         {
+//             for(int k=0;k<np;k++)
+//             {
+//                 phi1[k] = zquad[k];
+//             }
+//         }
+//         else
+//         {
+//             jacobfd(np, zquad.data(), phi1.data(), NULL, n, 0.0, 0.0);
 
-            for(int k=0;k<np;k++)
-            {
-                phi1[k] = phi1[k];
-            }
-        }
+//             for(int k=0;k<np;k++)
+//             {
+//                 phi1[k] = phi1[k];
+//             }
+//         }
         
-        basis.push_back(phi1);
-    }
-    return basis;
-}
+//         basis.push_back(phi1);
+//     }
+//     return basis;
+// }
 
 
 
-std::vector<std::vector<double> > getRadauPlusBasisEval(std::vector<double> zquad_eval, std::vector<double> zquad, int nq, int np, int P)
-{
+// std::vector<std::vector<double> > getRadauPlusBasisEval(std::vector<double> zquad_eval, std::vector<double> zquad, int nq, int np, int P)
+// {
 
-    int numModes = P + 1;
+//     int numModes = P + 1;
 
-    std::vector<std::vector<double> > basis;
+//     std::vector<std::vector<double> > basis;
     
-    for(int n=0;n<numModes;n++)
-    {   
-        std::vector<double> phi1(zquad_eval.size(),0.0);
+//     for(int n=0;n<numModes;n++)
+//     {   
+//         std::vector<double> phi1(zquad_eval.size(),0.0);
 
-        if(n == 0)
-        {
-            jacobfd(np, zquad.data(), phi1.data(), NULL, 1, 0.0, 0.0);
-            for(int k=0;k<zquad_eval.size();k++)
-            {
-                phi1[k] = 0.0;
-            }
-        }
-        else
-        {
-            std::vector<double> phi2(zquad_eval.size(),0.0);
+//         if(n == 0)
+//         {
+//             jacobfd(np, zquad_eval.data(), phi1.data(), NULL, 1, 0.0, 0.0);
+//             for(int k=0;k<zquad_eval.size();k++)
+//             {
+//                 phi1[k] = 0.0;
+//             }
+//         }
+//         else
+//         {
+//             std::vector<double> phi2(zquad_eval.size(),0.0);
 
-            jacobfd(np, zquad.data(), phi1.data(), NULL, n, 0.0, 0.0);
-            jacobfd(np, zquad.data(), phi2.data(), NULL, n-1, 0.0, 0.0);
+//             jacobfd(np, zquad_eval.data(), phi1.data(), NULL, n, 0.0, 0.0);
+//             jacobfd(np, zquad_eval.data(), phi2.data(), NULL, n-1, 0.0, 0.0);
 
-            for(int k=0;k<zquad_eval.size();k++)
-            {
-                phi1[k] = 0.5*(phi1[k] + phi2[k]);
-            }
-        }
+//             for(int k=0;k<zquad_eval.size();k++)
+//             {
+//                 phi1[k] = 0.5*(phi1[k] + phi2[k]);
+//             }
+//         }
         
-        basis.push_back(phi1);
-    }
-    return basis;
-}
+//         basis.push_back(phi1);
+//     }
+//     return basis;
+// }
 
 
-std::vector<std::vector<double> > getRadauMinusBasisEval(std::vector<double> zquad_eval, std::vector<double> zquad, int nq, int np, int P)
-{
+// std::vector<std::vector<double> > getRadauMinusBasisEval(std::vector<double> zquad_eval, std::vector<double> zquad, int nq, int np, int P)
+// {
 
    
-    int numModes = P + 1;
+//     int numModes = P + 1;
 
-    std::vector<std::vector<double> > basis;
+//     std::vector<std::vector<double> > basis;
     
-    for(int n=0;n<numModes;n++)
-    {   
-        std::vector<double> phi1(zquad_eval.size(),0.0);
+//     for(int n=0;n<numModes;n++)
+//     {   
+//         std::vector<double> phi1(zquad_eval.size(),0.0);
 
-        if(n == 0)
-        {
-            jacobfd(np, zquad.data(), phi1.data(), NULL, 1, 0.0, 0.0);
-            for(int k=0;k<zquad_eval.size();k++)
-            {
-                phi1[k] = 0.0;
-            }
-        }
-        else
-        {
-            std::vector<double> phi2(zquad_eval.size(),0.0);
+//         if(n == 0)
+//         {
+//             jacobfd(np, zquad.data(), phi1.data(), NULL, 1, 0.0, 0.0);
+//             for(int k=0;k<zquad_eval.size();k++)
+//             {
+//                 phi1[k] = 0.0;
+//             }
+//         }
+//         else
+//         {
+//             std::vector<double> phi2(zquad_eval.size(),0.0);
 
-            jacobfd(np, zquad.data(), phi1.data(), NULL, n, 0.0, 0.0);
-            jacobfd(np, zquad.data(), phi2.data(), NULL, n-1, 0.0, 0.0);
+//             jacobfd(np, zquad.data(), phi1.data(), NULL, n, 0.0, 0.0);
+//             jacobfd(np, zquad.data(), phi2.data(), NULL, n-1, 0.0, 0.0);
 
-            for(int k=0;k<zquad_eval.size();k++)
-            {
-                phi1[k] = pow(-1, n)*0.5*(phi1[k] - phi2[k]);
-            }
-        }
+//             for(int k=0;k<zquad_eval.size();k++)
+//             {
+//                 phi1[k] = pow(-1, n)*0.5*(phi1[k] - phi2[k]);
+//             }
+//         }
         
-        basis.push_back(phi1);
-    }
-    return basis;
-}
+//         basis.push_back(phi1);
+//     }
+//     return basis;
+// }
 
 
 
@@ -504,29 +505,29 @@ std::vector<std::vector<double> > getNodalBasis(std::vector<double> zquad, int n
 
 
 
-std::vector<std::vector<double> > getNodalBasisEval(std::vector<double> zquad_eval,std::vector<double> zquad, int nq, int np, int P)
-{
+// std::vector<std::vector<double> > getNodalBasisEval(std::vector<double> zquad_eval,std::vector<double> zquad, int nq, int np, int P)
+// {
 
-    if(nq != zquad.size())
-    {
-        std::cout << "error: nq != zquad.size() " << std::endl;
-    }
-    int numModes = P + 1;
+//     if(nq != zquad.size())
+//     {
+//         std::cout << "error: nq != zquad.size() " << std::endl;
+//     }
+//     int numModes = P + 1;
 
 
-    std::vector<std::vector<double> > basis;
+//     std::vector<std::vector<double> > basis;
     
-    for(int n=0;n<numModes;n++)
-    {
-        std::vector<double> phi1(zquad_eval.size());
-        for (int q = 0; q < zquad_eval.size(); ++q)
-        {
-            phi1[q] = hglj(n, zquad_eval[q], zquad.data(), numModes, 0.0, 0.0);
-        }
-        basis.push_back(phi1);
-    }
-    return basis;
-}
+//     for(int n=0;n<numModes;n++)
+//     {
+//         std::vector<double> phi1(zquad_eval.size());
+//         for (int q = 0; q < zquad_eval.size(); ++q)
+//         {
+//             phi1[q] = hglj(n, zquad_eval[q], zquad.data(), numModes, 0.0, 0.0);
+//         }
+//         basis.push_back(phi1);
+//     }
+//     return basis;
+// }
 
 
 
@@ -785,6 +786,10 @@ int main(int argc, char* argv[])
         std::vector<double> zplot(10*np,0.0);
         std::vector<double> wplot(10*np,0.0);
         zwgll(zplot.data(), wplot.data(), 10*np);
+
+        double** Dplot          = dmatrix(10*np);
+        double** Dplott         = dmatrix(10*np);
+        Dgll(Dplot, Dplott, zplot.data(), 10*np);
     
         // std::vector<std::vector<double> > basis_plot = getModalBasisEval(zplot, zplot, nq, zplot.size(), P);
        
@@ -794,16 +799,19 @@ int main(int argc, char* argv[])
 
         for(int i=0;i<basis_plot.size();i++)
         {
+            std::vector<double> basis_plot_diff(basis_plot[i].size(),0.0);
+            diff(10*np, Dplot, basis_plot[i].data(), basis_plot_diff.data(), 1.0);
+
             for(int j=0;j<basis_plot[i].size();j++)
             {
-                 solout << zplot[j] << " " << basis_plot[i][j] << endl;
+                 solout << zplot[j] << " " << basis_plot[i][j] << " " << basis_plot_diff[j] << endl;
             }
         }
 
         solout.close();
 
-        basis_m = getLegendreBasisEval(z, z, nq, np, P);
-
+        // basis_m = getLegendreBasisEval(z, z, nq, np, P);
+        basis_m = getModalBasisEval(z, z, nq, np, P);
         chi(np, 0, x, z.data(), Jac, bound);
 
         std::vector<double> MassMatElem = GetElementMassMatrix(P,basis_m,w,Jac[0]);
@@ -848,16 +856,22 @@ int main(int argc, char* argv[])
         std::vector<double> zradaumplot(10*np,0.0);
         std::vector<double> wradaumplot(10*np,0.0);
         zwgrjm(zradaumplot.data(), wradaumplot.data(), 10*np, 0.0, 0.0);
-        std::vector<std::vector<double> > basisradaum_plot = getRadauMinusBasisEval(zradaumplot, zradaumplot, nq, zradaumplot.size(), P);
+        double** Drmplot          = dmatrix(10*np);
+        double** Drmplott         = dmatrix(10*np);
+        Dgrlm(Drmplot, Drmplott, zradaumplot.data(), 10*np);
 
+        std::vector<std::vector<double> > basisradaum_plot = getRadauMinusBasisEval(zradaumplot, zradaumplot, nq, zradaumplot.size(), P);
         //std::vector<std::vector<double> > basisradau_plot = getRadauMinusBasisEvalV2(zradaumplot, zradaum, nq, 10*np, P);
         
         for(int i=0;i<basisradaum_plot.size();i++)
         {   
             std::cout << "basisradaum_plot[i].size() " << basisradaum_plot[i].size() << "  " << zradaumplot.size() << std::endl;
+            std::vector<double> basisradaum_plot_diff(basisradaum_plot[i].size(),0.0);
+            diff( 10*np, Drmplot, basisradaum_plot[i].data(), basisradaum_plot_diff.data(), 1.0);
+
             for(int j=0;j<basisradaum_plot[i].size();j++)
             {
-                 solout2 << zradaumplot[j] << " " << basisradaum_plot[i][j] << endl;
+                 solout2 << zradaumplot[j] << " " << basisradaum_plot[i][j] << " " << basisradaum_plot_diff[j] << endl;
             }
         }
 
@@ -874,7 +888,7 @@ int main(int argc, char* argv[])
         std::vector<double> zradaupplot(10*np,0.0);
         std::vector<double> wradaupplot(10*np,0.0);
         zwgrjp(zradaupplot.data(), wradaupplot.data(), 10*np, 0.0, 0.0);
-        std::vector<std::vector<double> > basisradaup_plot = getRadauPlusBasisEval(zplot, zplot, nq, zplot.size(), P);
+        std::vector<std::vector<double> > basisradaup_plot = getRadauPlusBasisEval(zradaupplot, zradaupplot, nq, zplot.size(), P);
 
         //std::vector<std::vector<double> > basisradau_plot = getRadauMinusBasisEvalV2(zradaumplot, zradaum, nq, 10*np, P);
         
@@ -1130,8 +1144,6 @@ void CalculateRHS(int np, int nq, int Nel, int P, std::vector<double> zquad, std
 
         DeltaF_l[i] = FLUX[i]-FtLn[i];
         DeltaF_r[i] = FLUX[i]-FtRn[i];
-
-        //std::cout << DeltaF_l[i] << " " << DeltaF_r[i] << " " <<  FLUX[i] << " " << FtLn[i] << " " << FtRn[i] << std::endl;
     }
 
     double *numcoeff = dvector(Mdim);
@@ -1202,7 +1214,7 @@ void CalculateRHS(int np, int nq, int Nel, int P, std::vector<double> zquad, std
 
         // std::cout << "numcoeff["<<i<<"]="<<numcoeff[i]<<std::endl;
     }
-    std::cout << std::endl;
+    //std::cout << std::endl;
     GetGlobalMassMatrixNew(Nel, P, wquad, Jac, map, Mdim, basis, MassMatGlobal);
     dgetrf_(&Mdim, &Mdim, MassMatGlobal[0], &Mdim, ipiv, &INFO);
     dgetrs_(&TRANS, &Mdim, &NRHS, MassMatGlobal[0], &Mdim, ipiv, Ucoeff, &Mdim, &INFO);
