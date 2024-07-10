@@ -1,6 +1,51 @@
 #include "basis_functions.h"
 
 
+
+extern "C" {extern void dgetrf_(int *, int *, double (*), int *, int [], int*);}
+extern "C" {extern void dgetrs_(unsigned char *, int *, int *, double (*), int *, int [], double [], int *, int *);}
+extern "C" {extern void dgemv_(unsigned char *, int *, int *, double *, double (*), int *, double [], int *, double *, double [], int *);}
+extern "C" {extern void dgetri_(int* N, double* A, int* lda, int* IPIV, double* WORK, int* lwork, int* INFO);}
+
+void *diff(int np, double **D, double *p, double *pd, double J)
+{
+    for(int i=0;i<np;i++){
+        pd[i] = 0;
+        for(int j=0;j<np;j++){
+            pd[i] = pd[i] + D[i][j]*p[j];
+        }
+        pd[i] = pd[i]/J;
+        
+    }
+    return 0;
+}
+
+// This member function perform numerical quadrature.
+double integr(int np, double *w, double *phi1, double *phi2)
+{
+  register double sum = 0.;
+
+  for(int i=0;i<np;i++){
+    sum = sum + phi1[i]*phi2[i]*w[i]; 
+  }
+  return sum;
+}
+
+
+double **dmatrix(int n)
+{
+  double **A;
+  A = (double **)malloc(n*sizeof(double *));
+  A[0] = (double *)malloc(n*n*sizeof(double));
+
+  for(int i=1;i<n;i++){
+    A[i] = A[i-1]+n;
+  }
+  return A;
+}
+
+
+
 std::vector<std::vector<double> > getLegendreBasisEval(std::vector<double> zquad_eval, std::vector<double> zquad, int nq, int np, int P)
 {
 
@@ -200,6 +245,359 @@ std::vector<std::vector<double> > getModalBasisEval(std::vector<double> zquad_ev
     }
     return basis;
 }
+
+
+
+
+
+
+
+std::vector<double> GetElementMassMatrix(int P, 
+                            std::vector<std::vector<double> > basis,
+                            std::vector<double> wquad,
+                            double J)
+{
+    std::vector<double> MassMatElem((P+1)*(P+1),0.0);
+    int np = wquad.size();
+    for(int i=0;i<P+1;i++)
+    {
+        std::vector<double> phi1 = basis[i];
+        for(int j=0;j<P+1;j++)
+        {
+            std::vector<double> phi2 = basis[j];
+            MassMatElem[i*(P+1)+j] = J*integr(np, wquad.data(), phi1.data(), phi2.data());
+        }
+    }
+    return MassMatElem;
+}
+
+
+
+
+
+
+
+std::vector<double> ForwardTransform(int P, 
+                                     int np,
+                                     std::vector<std::vector<double> > basis, 
+                                     std::vector<double>wquad, int nq,
+                                     double J, 
+                                     std::vector<double> input_quad)
+{
+    
+    std::vector<double> coeff(P+1);
+    int ncoeffs     = P+1;
+    // double *Icoeff  = dvector(ncoeffs);
+    std::vector<double> Icoeff(ncoeffs);
+    for(int j=0;j<P+1;j++)
+    {
+        std::vector<double> phi1 = basis[j];
+
+        Icoeff[j] = J*integr(nq, wquad.data(), phi1.data(), input_quad.data());
+    }
+
+    std::vector<double> MassMatElem = GetElementMassMatrix(P,basis,wquad,J);
+
+    int ONE_INT=1;
+    double ONE_DOUBLE=1.0;
+    double ZERO_DOUBLE=0.0;
+    unsigned char TR = 'T';
+    int INFO;
+    int LWORK = ncoeffs*ncoeffs;
+    double *WORK = new double[LWORK];
+    // int *ip = ivector(ncoeffs);
+    std::vector<int> ip(ncoeffs);
+    // Create inverse Mass matrix.
+    dgetrf_(&ncoeffs, &ncoeffs, MassMatElem.data(), &ncoeffs, ip.data(), &INFO);
+    dgetri_(&ncoeffs, MassMatElem.data(), &ncoeffs, ip.data(), WORK, &LWORK, &INFO);
+    // Apply InvMass to Icoeffs hence M^-1 Icoeff = uhat
+    dgemv_(&TR,&ncoeffs,&ncoeffs,&ONE_DOUBLE,MassMatElem.data(),&ncoeffs,Icoeff.data(),&ONE_INT,&ZERO_DOUBLE,coeff.data(),&ONE_INT);
+    return coeff;
+}
+
+
+
+
+
+
+
+std::vector<double> BackwardTransform(int P, 
+                                      int np, 
+                                      std::vector<std::vector<double> > basis,  
+                                      std::vector<double> input_coeff)
+{
+
+    std::vector<double> quad(np,0.0);
+    double sum = 0.0;
+    for(int i = 0;i<P+1;i++)
+    {
+        std::vector<double> phi1 =basis[i];
+        for( int j=0;j<np;j++)
+        {
+            quad[j] = quad[j]+input_coeff[i]*phi1[j];
+        }
+    }
+
+    return quad;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+void run_nodal_test(double* x, 
+                    std::vector<double> z, 
+                    std::vector<double> w, 
+                    double* bound, 
+                    double* Jac, 
+                    int np, int nq, int P)
+{
+
+    std::vector<double> X_DG_test(np,0.0);
+    std::vector<double> U_DG_test(np,0.0);
+
+    std::cout << "Running nodal " << std::endl;
+
+    ofstream solout;
+    solout.open("nodal_basis.out");
+
+    std::vector<double> zplot(10*np,0.0);
+    std::vector<double> wplot(10*np,0.0);
+    zwgll(zplot.data(), wplot.data(), 10*np);
+    std::vector<std::vector<double> > basis_plot = getNodalBasisEval(zplot, z, nq, np, P);
+    
+    for(int i=0;i<basis_plot.size();i++)
+    {
+        for(int j=0;j<basis_plot[i].size();j++)
+        {
+                solout << zplot[j] << " " << basis_plot[i][j] << endl;
+        }
+    }
+
+    solout.close();
+
+    // std::vector<std::vector<double> > basis_m = getNodalBasis(z, nq, np, P);
+    std::vector<std::vector<double> > basis_m = getNodalBasisEval(z, z, nq, np, P);
+
+    // chi(np, 0, x, z.data(), Jac, bound);
+
+    for(int i=0;i<np;i++)
+    {
+        // construct global coordinates for each quadrature point.
+        X_DG_test [i]    = x[i];
+        // construct initial solution at each quadrature point.
+        U_DG_test [i]    = 2.0+sin(2.0*M_PI*x[i]);
+    }
+
+    std::vector<double> coeff_e = ForwardTransform(P, np, basis_m, w, nq, Jac[0], U_DG_test);
+    
+    std::vector<double> quad_e  = BackwardTransform(P, np,  basis_m,  coeff_e);
+
+    double L2norm = 0.0;
+    for(int i=0;i<quad_e.size();i++)
+    {
+        L2norm = L2norm+(quad_e[i]-U_DG_test[i])*(quad_e[i]-U_DG_test[i]);
+    }
+    if(abs(L2norm)<1.0e-12)
+    {
+        std::cout << "Nodal basis Fwd and Bwd test PASSED :: L2norm = " << L2norm << std::endl; 
+    }
+    else
+    {
+        std::cout << "Nodal basis Fwd and Bwd test FAILED :: L2norm =" << L2norm << std::endl; 
+    }
+}
+
+
+
+
+
+void run_modal_test(double* x, 
+                    std::vector<double> z, 
+                    std::vector<double> w, 
+                    double* bound, 
+                    double* Jac, 
+                    int np, int nq, int P)
+{
+
+    std::vector<double> X_DG_test(np,0.0);
+    std::vector<double> U_DG_test(np,0.0);
+    std::cout << "Running modal " << std::endl;
+
+    ofstream solout;
+    solout.open("modal_basis.out");
+
+    std::vector<double> zplot(10*np,0.0);
+    std::vector<double> wplot(10*np,0.0);
+    zwgll(zplot.data(), wplot.data(), 10*np);
+
+    double** Dplot          = dmatrix(10*np);
+    double** Dplott         = dmatrix(10*np);
+    Dgll(Dplot, Dplott, zplot.data(), 10*np);
+
+    std::vector<std::vector<double> > basis_plot = getLegendreBasisEval(zplot, zplot, nq, zplot.size(), P);
+
+    for(int i=0;i<basis_plot.size();i++)
+    {
+        std::vector<double> basis_plot_diff(basis_plot[i].size(),0.0);
+        diff(10*np, Dplot, basis_plot[i].data(), basis_plot_diff.data(), 1.0);
+
+        for(int j=0;j<basis_plot[i].size();j++)
+        {
+                solout << zplot[j] << " " << basis_plot[i][j] << " " << basis_plot_diff[j] << endl;
+        }
+    }
+
+    solout.close();
+
+    std::vector<std::vector<double> > basis_m = getModalBasisEval(z, z, nq, np, P);
+
+    std::vector<double> MassMatElem = GetElementMassMatrix(P,basis_m,w,Jac[0]);
+
+    std::cout << "M=[";
+    for(int i=0;i<P+1;i++)
+    {
+        std::cout << "[";
+        for(int j=0;j<P+1;j++)
+        {
+            if(j<P)
+            {
+                std::cout << MassMatElem[i*(P+1)+j] << ", ";
+            }
+            else
+            {
+                std::cout << MassMatElem[i*(P+1)+j];
+            }
+            
+        }
+        if(i<P)
+        {
+            std::cout <<"],"<< std::endl;
+        }
+        else
+        {
+            std::cout <<"]]"<< std::endl;
+        }
+        
+    }
+
+
+    std::cout << "Running Gauss-Radau-Legendre Minus " << std::endl;
+
+    ofstream solout2;
+    solout2.open("radaum_basis.out");
+
+    std::vector<double> zradaum(np,0.0);
+    std::vector<double> wradaum(np,0.0);
+    zwgrjm(zradaum.data(), wradaum.data(), np, 0.0, 0.0);
+
+    std::vector<double> zradaumplot(10*np,0.0);
+    std::vector<double> wradaumplot(10*np,0.0);
+    zwgrjm(zradaumplot.data(), wradaumplot.data(), 10*np, 0.0, 0.0);
+    double** Drmplot          = dmatrix(10*np);
+    double** Drmplott         = dmatrix(10*np);
+    Dgrlm(Drmplot, Drmplott, zradaumplot.data(), 10*np);
+
+    std::vector<std::vector<double> > basisradaum_plot = getRadauMinusBasisEval(zradaumplot, zradaumplot, nq, zradaumplot.size(), P);
+    //std::vector<std::vector<double> > basisradau_plot = getRadauMinusBasisEvalV2(zradaumplot, zradaum, nq, 10*np, P);
+    
+    for(int i=0;i<basisradaum_plot.size();i++)
+    {   
+        std::cout << "basisradaum_plot[i].size() " << basisradaum_plot[i].size() << "  " << zradaumplot.size() << std::endl;
+        std::vector<double> basisradaum_plot_diff(basisradaum_plot[i].size(),0.0);
+        diff( 10*np, Drmplot, basisradaum_plot[i].data(), basisradaum_plot_diff.data(), 1.0);
+
+        for(int j=0;j<basisradaum_plot[i].size();j++)
+        {
+                solout2 << zradaumplot[j] << " " << basisradaum_plot[i][j] << " " << basisradaum_plot_diff[j] << endl;
+        }
+    }
+
+    solout2.close();
+
+
+    ofstream solout30;
+    solout30.open("radaum_points.out");
+    for(int i=0;i<zradaum.size();i++)
+    { 
+        solout30 << zradaum[i] << std::endl;
+    }
+    solout30.close();
+
+
+   
+
+
+
+
+    ofstream solout3;
+    solout3.open("radaup_basis.out");
+
+    std::vector<double> zradaup(np,0.0);
+    std::vector<double> wradaup(np,0.0);
+    zwgrjp(zradaup.data(), wradaup.data(), np, 0.0, 0.0);
+
+    std::vector<double> zradaupplot(10*np,0.0);
+    std::vector<double> wradaupplot(10*np,0.0);
+    zwgrjp(zradaupplot.data(), wradaupplot.data(), 10*np, 0.0, 0.0);
+    std::vector<std::vector<double> > basisradaup_plot = getRadauPlusBasisEval(zradaupplot, zradaupplot, nq, zplot.size(), P);
+
+    //std::vector<std::vector<double> > basisradau_plot = getRadauMinusBasisEvalV2(zradaumplot, zradaum, nq, 10*np, P);
+    
+    for(int i=0;i<basisradaup_plot.size();i++)
+    {   
+        std::cout << "basisradaup_plot[i].size() " << basisradaup_plot[i].size() << "  " << zradaumplot.size() << std::endl;
+        for(int j=0;j<basisradaup_plot[i].size();j++)
+        {
+                solout3 << zradaumplot[j] << " " << basisradaup_plot[i][j] << endl;
+        }
+    }
+
+    solout3.close();
+    
+     ofstream solout40;
+    solout40.open("radaup_points.out");
+    for(int i=0;i<zradaup.size();i++)
+    { 
+        solout40 << zradaup[i] << std::endl;
+    }
+    solout40.close();
+
+    for(int i=0;i<np;i++)
+    {
+        // construct global coordinates for each quadrature point.
+        X_DG_test [i]    = x[i];
+        // construct initial solution at each quadrature point.
+        U_DG_test [i]    = 2.0+sin(2.0*M_PI*x[i]);
+    }
+
+    std::vector<double> coeff_e = ForwardTransform(P, np, basis_m, w, nq, Jac[0], U_DG_test);
+    
+    std::vector<double> quad_e  = BackwardTransform(P, np,  basis_m,  coeff_e);
+    double L2norm = 0.0;
+    for(int i=0;i<quad_e.size();i++)
+    {
+        L2norm = L2norm+(quad_e[i]-U_DG_test[i])*(quad_e[i]-U_DG_test[i]);
+    }
+
+    if(abs(L2norm)<1.0e-12)
+    {
+        std::cout << "Modal basis Fwd and Bwd test PASSED :: L2norm = " << L2norm << std::endl; 
+    }
+    else
+    {
+        std::cout << "Modal basis Fwd and Bwd test FAILED :: L2norm =" << L2norm << std::endl; 
+    }
+}
+
+
 
 
 

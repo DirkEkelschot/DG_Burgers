@@ -104,13 +104,15 @@ plt.figure(2020)
 for i in range(0,(P+1)):
     # sum = sum + nodal[i*(P+1):(i+1)*(P+1),1]
     
-    plt.plot(radau[i*offset:(i+1)*offset,0],radau[i*offset:(i+1)*offset,2],label='R'+str(i))
+    plt.plot(radau[i*offset:(i+1)*offset,0],radau[i*offset:(i+1)*offset,2],label='Rdiff'+str(i))
 
     for j in range(0,offset):
         sum[j] = sum[j] + radau[i*offset+j,1]
 
 # print(sum)
 # plt.plot(radau[0:offset,0],sum,'r')
+
+
 plt.legend()
 
 
@@ -130,8 +132,29 @@ for i in range(0,(P+1)):
 
 # print(sum)
 # plt.plot(radau[0:offset,0],sum,'r')
+
 plt.legend()
 
+
+radauM = np.loadtxt('radaum_basis.out')
+radauP = np.loadtxt('radaup_basis.out')
+
+
+i = P
+plt.figure(1012)
+plt.plot(radauM[i*offset:(i+1)*offset,0],radauM[i*offset:(i+1)*offset,1]*0.5,label='M'+str(i))
+plt.plot(radauP[i*offset:(i+1)*offset,0],radauP[i*offset:(i+1)*offset,1]*0.5,label='R'+str(i))
+
+radaum_points = np.loadtxt('radaum_points.out')
+radaum_pointsY = np.zeros((len(radaum_points),1))
+plt.plot(radaum_points,radaum_pointsY,'or')
+
+radaup_points = np.loadtxt('radaup_points.out')
+radaup_pointsY = np.zeros((len(radaup_points),1))
+plt.plot(radaup_points,radaup_pointsY,'+k')
+
+
+plt.plot()
 
 
 plt.show()
