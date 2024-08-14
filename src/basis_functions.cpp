@@ -196,6 +196,8 @@ std::vector<std::vector<double> > getNodalBasisEval(std::vector<double> zquad_ev
         for (int q = 0; q < zquad_eval.size(); ++q)
         {
             phi1[q] = hglj(n, zquad_eval[q], zquad.data(), numModes, 0.0, 0.0);
+            //phi1[q] = hgll(n, zquad_eval[q], zquad.data(), numModes);
+            //phi1[q] = hgl(n, zquad_eval[q], zquad.data(), numModes);
         }
         basis.push_back(phi1);
     }
@@ -234,7 +236,7 @@ std::vector<std::vector<double> > getModalBasisEval(std::vector<double> zquad_ev
         else
         {
             jacobfd(np, zquad.data(), phi1.data(), NULL, n-1, 1.0, 1.0);
-
+            
             for(int k=0;k<np;k++)
             {
                 phi1[k] = ((1-zquad[k])/2)*((1+zquad[k])/2)*phi1[k];
