@@ -4,12 +4,37 @@ import matplotlib.pyplot as plt
 import sys
 import argparse
 
+import xml.etree.ElementTree as ET
+
+# with open('inputs.xml', 'r') as f:
+#     inputs = f.read()
+
+# print(inputs.find('PolynomialOrder')
+      
+# Parse the XML file
+tree = ET.parse('inputs.xml')
+
+# Get the root element
+root = tree.getroot()
+
+# Access the PARAMETERS element
+parameters = root.find('PARAMETERS')
+
+# Extract and print each parameter
+inputs_map = {}
+for param in parameters.findall('P'):
+    key, value = param.text.split('=')
+    key = key.strip()
+    value = value.strip()
+    print(f"{key}: {value}")
+    inputs_map[key] = value
 
 args = sys.argv;
 
-P = int(args[1])
-Nel = int(args[2])
-npo = 2*P + 1
+print(inputs_map['PolynomialOrder'])
+P   = int(float(inputs_map['PolynomialOrder']))
+Nel = int(float(inputs_map['nElements']))
+npo = int(float(inputs_map['nQuadrature']))
 
 
     
@@ -75,15 +100,18 @@ for i in range(0,Nel):
 
 fig, axs = plt.subplots(3, 1)
 axs[0].plot(x_p, rho_p)
-# axs[0].plot(x_p, rho_p_i,'--','tab:red')
+axs[0].plot(x_p, rho_p_i,'--')
+axs[0].plot(x_p, rho_p,'.')
 axs[0].set_title(r'$\rho$')
 axs[0].grid()
 axs[1].plot(x_p, rhou_p)
-# axs[1].plot(x_p, rhou_p_i,'--','tab:red')
+axs[1].plot(x_p, rhou_p_i,'--')
+axs[1].plot(x_p, rhou_p,'.')
 axs[1].set_title(r'$\rho u$')
 axs[1].grid()
 axs[2].plot(x_p, rhoE_p)
-# axs[2].plot(x_p, rhoE_p_i,'--','tab:red')
+axs[2].plot(x_p, rhoE_p_i,'--')
+axs[2].plot(x_p, rhoE_p,'.')
 axs[2].set_title(r'$\rho E$')
 axs[2].grid()
 # axs[3].plot(x_p, pres_p, 'tab:red')
@@ -92,8 +120,11 @@ axs[2].grid()
 
 
 
+# plt.figure(2)
 
-
+# plt.plot(x_p, rhou_p_i,'--')
+# plt.plot(x_p, rhou_p,'.')
+# plt.plot(x_p, rhou_p)
 plt.show()
 
 

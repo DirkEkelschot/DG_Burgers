@@ -600,7 +600,7 @@ int main(int argc, char* argv[])
         zwgl(zq.data(), wq.data(), nq);
         Dgl(D, Dt, z.data(), np);
         
-        basis_m = getNodalBasisEval(z, z, nq, np, P);
+        basis_m = getNodalBasisEval(z, z, P);
 
 
     }
@@ -699,14 +699,14 @@ int main(int argc, char* argv[])
     sol_e.close();
 
 
-    if (modal == 0)
-    {
-        run_nodal_test(x, z, w, bound, Jac, np, nq, P);
-    }
-    if(modal == 1)
-    {
-        run_modal_test(x, z, w, bound, Jac, np, nq, P);
-    }
+    // if (modal == 0)
+    // {
+    //     run_nodal_test(x, z, w, bound, Jac, np, nq, P);
+    // }
+    // if(modal == 1)
+    // {
+    //     run_modal_test(x, z, w, bound, Jac, np, nq, P);
+    // }
 
             
         
@@ -1043,8 +1043,8 @@ void CalculateRHSWeakFR(int np, int nq, int Nel, int P, std::vector<double> zqua
         //ForwardTransform(np, P, z, w, Jac[eln], quad_e, coeff_e);
         //std::vector<double> coeff_e = ForwardTransformLagrange(P, zquad, wquad, nq, J, quad_e, np);
 
-        std::vector<double> coeff_e = ForwardTransform(P, np, basis, wquad, nq, J, quad_e);
-        std::vector<double> coeff_u = ForwardTransform(P, np, basis, wquad, nq, J, quad_u);
+        std::vector<double> coeff_e = ForwardTransform(P, basis, wquad, nq, J, quad_e);
+        std::vector<double> coeff_u = ForwardTransform(P, basis, wquad, nq, J, quad_u);
 
         for(int i = 0;i < (P+1);i++)
         {
@@ -1453,9 +1453,9 @@ void CalculateRHSStrongFREuler(int np, int nq, int Nel, int P, std::vector<doubl
         }
 
         
-        std::vector<double> coeff_eq0 = ForwardTransform(P, np, basis, wquad, nq, J, quad_eq0);
-        std::vector<double> coeff_eq1 = ForwardTransform(P, np, basis, wquad, nq, J, quad_eq1);
-        std::vector<double> coeff_eq2 = ForwardTransform(P, np, basis, wquad, nq, J, quad_eq2);
+        std::vector<double> coeff_eq0 = ForwardTransform(P, basis, wquad, nq, J, quad_eq0);
+        std::vector<double> coeff_eq1 = ForwardTransform(P, basis, wquad, nq, J, quad_eq1);
+        std::vector<double> coeff_eq2 = ForwardTransform(P, basis, wquad, nq, J, quad_eq2);
 
 
         for(int i = 0;i < (P+1);i++)
@@ -1728,7 +1728,6 @@ void CalculateRHSStrongFREuler(int np, int nq, int Nel, int P, std::vector<doubl
     dgemv_(&TRANS,&Mdim,&Mdim,&ONE_DOUBLE,StiffnessMatGlobal[0],&Mdim,F_DG_coeff[0].data(),&ONE_INT,&ZERO_DOUBLE,tmp0,&ONE_INT);
     dgemv_(&TRANS,&Mdim,&Mdim,&ONE_DOUBLE,StiffnessMatGlobal[0],&Mdim,F_DG_coeff[1].data(),&ONE_INT,&ZERO_DOUBLE,tmp1,&ONE_INT);
     dgemv_(&TRANS,&Mdim,&Mdim,&ONE_DOUBLE,StiffnessMatGlobal[0],&Mdim,F_DG_coeff[2].data(),&ONE_INT,&ZERO_DOUBLE,tmp2,&ONE_INT);
-
 
     std::vector<double> Ucoeff_eq0(Mdim,0.0);
     std::vector<double> Ucoeff_eq1(Mdim,0.0);
@@ -2073,8 +2072,8 @@ void CalculateRHSStrongFR(int np, int nq, int Nel, int P, std::vector<double> zq
         //ForwardTransform(np, P, z, w, Jac[eln], quad_e, coeff_e);
         //std::vector<double> coeff_e = ForwardTransformLagrange(P, zquad, wquad, nq, J, quad_e, np);
 
-        std::vector<double> coeff_e = ForwardTransform(P, np, basis, wquad, nq, J, quad_e);
-        std::vector<double> coeff_u = ForwardTransform(P, np, basis, wquad, nq, J, quad_u);
+        std::vector<double> coeff_e = ForwardTransform(P, basis, wquad, nq, J, quad_e);
+        std::vector<double> coeff_u = ForwardTransform(P, basis, wquad, nq, J, quad_u);
 
         for(int i = 0;i < (P+1);i++)
         {

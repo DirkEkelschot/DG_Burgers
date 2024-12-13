@@ -673,7 +673,7 @@ int main(int argc, char* argv[])
     D  = dmatrix(nq);
     Dt = dmatrix(nq);
     
-    Basis* bModalkey = new Basis(inputs->ptype,
+    Basis* bkey = new Basis(inputs->ptype,
                                  inputs->btype,
                                  zq,wq,P,nq);
 
@@ -720,35 +720,90 @@ int main(int argc, char* argv[])
             // Determine the coordinates in each element x.
             chi(nq, eln, x, zq.data(), Jac, bound);
 
+            for(int i=0;i<nq;i++)
+            {
+                X_DG_e[eln*nq+i] = x[i];
+                U_DG_row0[eln*nq+i]    = 1.0+0.2*sin(2.0*M_PI*x[i]);
+                U_DG_row1[eln*nq+i]    = 1.0;
+                U_DG_row2[eln*nq+i]    = 1.0;
+            }
+                
             //chi(np, eln, x2, zq.data(), Jac, bound);
             
             // Places the element coordinates x into the right place in
             // the global coordinate vector.
-            for(int i=0;i<nq;i++)
-            {
-                X_DG_e[eln*nq+i] = x[i];
+            // for(int i=0;i<nq;i++)
+            // {
+            //     X_DG_e[eln*nq+i] = x[i];
 
-                if(x[i]<0.5)
-                {
-                    double pressure        = pL;
-                    U_DG_row0[eln*nq+i]    = rhoL;
-                    U_DG_row1[eln*nq+i]    = rhoL*uL;
-                    U_DG_row2[eln*nq+i]    = (pL/gammaMone);
+            //     if(x[i]<0.5)
+            //     {
+            //         double pressure        = pL;
+            //         U_DG_row0[eln*nq+i]    = rhoL;
+            //         U_DG_row1[eln*nq+i]    = rhoL*uL;
+            //         U_DG_row2[eln*nq+i]    = (pL/gammaMone);
 
-                }
-                else if(x[i]>0.5)
-                {
-                    double pressure        = pR;
-                    U_DG_row0[eln*nq+i]    = rhoR;
-                    U_DG_row1[eln*nq+i]    = rhoR*uR;
-                    U_DG_row2[eln*nq+i]    = (pR/gammaMone);
-                }
-            }
+            //     }
+            //     else if(x[i]>0.5)
+            //     {
+            //         double pressure        = pR;
+            //         U_DG_row0[eln*nq+i]    = rhoR;
+            //         U_DG_row1[eln*nq+i]    = rhoR*uR;
+            //         U_DG_row2[eln*nq+i]    = (pR/gammaMone);
+            //     }
+            // }
         }
     }
     if(restart==1)
     {   
         readRestart("dgdataEuler.out",X_DG_e,U_DG_row0,U_DG_row1,U_DG_row2);
+    }
+
+
+    // Run test:
+
+    Basis* bModalkey = new Basis(inputs->ptype,
+                                 "Modal",
+                                 zq,wq,P,nq);
+
+    std::vector<std::vector<double> > basis_test = bModalkey->GetB();
+
+    for(int el = 0;el < Nel;el++)
+    {   
+        double J = Jac[el];
+        std::vector<double> quad_eq0(nq);
+        for(int q = 0; q < nq;q++)
+        {
+            quad_eq0[q] = U_DG_row0[el*nq+q];
+        }
+        std::vector<double> coeff_eq0     = ForwardTransform(P, basis_test, wq, nq, J, quad_eq0);
+        std::vector<double> quad_e0_recov = BackwardTransform(P,  nq,  basis_test,  coeff_eq0);
+
+        for(int q = 0; q < nq;q++)
+        {
+            std::cout << "test 1 " << quad_eq0[q] << " " << quad_e0_recov[q] << " " << J << std::endl;
+        }
+    
+    }
+
+    std::vector<std::vector<double> > basis_plot = getModalBasisEval(zq, zq, nq, P, inputs->ptype);
+
+    for(int el = 0;el < Nel;el++)
+    {   
+        double J = Jac[el];
+        std::vector<double> quad_eq0(nq);
+        for(int q = 0; q < nq;q++)
+        {
+            quad_eq0[q] = U_DG_row0[el*nq+q];
+        }
+        std::vector<double> coeff_eq0     = ForwardTransform(P, basis_plot, wq, nq, J, quad_eq0);
+        std::vector<double> quad_e0_recov = BackwardTransform(P,  nq,  basis_plot,  coeff_eq0);
+
+        for(int q = 0; q < nq;q++)
+        {
+            std::cout << "test 2 " << quad_eq0[q] << " " << quad_e0_recov[q] << " " << J << std::endl;
+        }
+    
     }
     
 
@@ -868,7 +923,7 @@ int main(int argc, char* argv[])
         if(timeScheme==0)
         {
             //CalculateRHSStrongFREuler(bModalkey, np, nq, Nel, P, zq, wq, zq, D, Jac, map, bc_e, X_DG_e, U_DG, R_DG0, dt, basis_m);
-            CalculateRHSWeakFREuler(bModalkey, np, nq, Nel, P, zq, wq, zq, inputs->btype, inputs->ptype, D, Jac, map, bc_e, X_DG_e, U_DG, R_DG0, dt, basis_m);
+            CalculateRHSWeakFREuler(bkey, np, nq, Nel, P, zq, wq, zq, inputs->btype, inputs->ptype, D, Jac, map, bc_e, X_DG_e, U_DG, R_DG0, dt, basis_m);
 
             for(int i=0;i<(Nel*nq);i++)
             {
@@ -894,7 +949,7 @@ int main(int argc, char* argv[])
         if(timeScheme==1)
         {
             //CalculateRHSStrongFREuler(np, nq, Nel, P, zq, wq, zq, D, Jac, map, bc_e, X_DG_e, U_DG, R_DG0, dt, basis_m);
-            CalculateRHSWeakFREuler(bModalkey, np, nq, Nel, P, zq, wq, zq, inputs->btype, inputs->ptype, D, Jac, map, bc_e, X_DG_e, U_DG, R_DG0, dt, basis_m);
+            CalculateRHSWeakFREuler(bkey, np, nq, Nel, P, zq, wq, zq, inputs->btype, inputs->ptype, D, Jac, map, bc_e, X_DG_e, U_DG, R_DG0, dt, basis_m);
             for(int i=0;i<(Nel*nq);i++)
             {
                 // std::cout << "R_DG0[0][i] " << R_DG0[0][i] << " " << R_DG0[1][i] << " " << R_DG0[2][i] << std::endl; 
@@ -915,7 +970,7 @@ int main(int argc, char* argv[])
             }
 
             //CalculateRHSStrongFREuler(np, nq, Nel, P, zq, wq, zq, D, Jac, map, bc_e, X_DG_e, k1_input, R_DG1, dt, basis_m);
-            CalculateRHSWeakFREuler(bModalkey, np, nq, Nel, P, zq, wq, zq, inputs->btype, inputs->ptype, D, Jac, map, bc_e, X_DG_e, k1_input, R_DG1, dt, basis_m);
+            CalculateRHSWeakFREuler(bkey, np, nq, Nel, P, zq, wq, zq, inputs->btype, inputs->ptype, D, Jac, map, bc_e, X_DG_e, k1_input, R_DG1, dt, basis_m);
             for(int i=0;i<(Nel*nq);i++)
             {
                 // std::cout << "R_DG0[0][i] " << R_DG0[0][i] << " " << R_DG0[1][i] << " " << R_DG0[2][i] << std::endl; 
@@ -936,7 +991,7 @@ int main(int argc, char* argv[])
             }
 
             //CalculateRHSStrongFREuler(np, nq, Nel, P, zq, wq, zq, D, Jac, map, bc_e, X_DG_e, k2_input, R_DG2, dt, basis_m);
-            CalculateRHSWeakFREuler(bModalkey, np, nq, Nel, P, zq, wq, zq, inputs->btype, inputs->ptype, D, Jac, map, bc_e, X_DG_e, k2_input, R_DG2, dt, basis_m);
+            CalculateRHSWeakFREuler(bkey, np, nq, Nel, P, zq, wq, zq, inputs->btype, inputs->ptype, D, Jac, map, bc_e, X_DG_e, k2_input, R_DG2, dt, basis_m);
 
             for(int i=0;i<(Nel*nq);i++)
             {
@@ -958,7 +1013,7 @@ int main(int argc, char* argv[])
             }
 
             //CalculateRHSStrongFREuler(np, nq, Nel, P, zq, wq, zq, D, Jac, map, bc_e, X_DG_e, k3_input, R_DG3, dt, basis_m);
-            CalculateRHSWeakFREuler(bModalkey, np, nq, Nel, P, zq, wq, zq, inputs->btype, inputs->ptype, D, Jac, map, bc_e, X_DG_e, k3_input, R_DG3, dt, basis_m);
+            CalculateRHSWeakFREuler(bkey, np, nq, Nel, P, zq, wq, zq, inputs->btype, inputs->ptype, D, Jac, map, bc_e, X_DG_e, k3_input, R_DG3, dt, basis_m);
 
 
             for(int i=0;i<(Nel*nq);i++)
@@ -1162,6 +1217,17 @@ void CalculateRHSWeakFREuler(Basis* bkey, int np, int nq, int Nel, int P, std::v
         std::vector<double> coeff_eq1 = ForwardTransform(P, Bmat, wquad, nq, J, quad_eq1);
         std::vector<double> coeff_eq2 = ForwardTransform(P, Bmat, wquad, nq, J, quad_eq2);
 
+        // std::vector<double> quad_e0_recov = BackwardTransform(P,  nq,  Bmat,  coeff_eq0);
+        // std::vector<double> quad_e1_recov = BackwardTransform(P,  nq,  Bmat,  coeff_eq1);
+        // std::vector<double> quad_e2_recov = BackwardTransform(P,  nq,  Bmat,  coeff_eq2);
+
+        // for(int i = 0;i < nq;i++)
+        // {
+        //     std::cout << quad_eq0[i] << " -- " << quad_e0_recov[i]/J << std::endl;
+        //     std::cout << quad_eq1[i] << " -- " << quad_e1_recov[i]/J << std::endl;
+        //     std::cout << quad_eq2[i] << " -- " << quad_e2_recov[i]/J << std::endl;
+        // }
+
         // if(btype == "Nodal")
         // {
         //     double value_left  = EvaluateFromNodalBasis(P, -1, coeff_eq0, zquad, ptype);
@@ -1171,7 +1237,7 @@ void CalculateRHSWeakFREuler(Basis* bkey, int np, int nq, int Nel, int P, std::v
         //     double value_right_int = EvaluateFromNodalBasis(P,  zquad[nq-1], coeff_eq0, zquad, ptype);
 
         //     std::cout << -1 << " " << zquad[0] << " -- " <<  zquad[nq-1] << " " << 1 << std::endl;
-
+        //     std::cout << J << std::endl;
         //     std::cout << eln << " coeff_eq0 " << coeff_eq0.size() << " (" << value_left << " - " << value_right << ") (" << value_left_int << " - " << value_right_int << ")" << std::endl;
         // }
 
@@ -1241,10 +1307,9 @@ void CalculateRHSWeakFREuler(Basis* bkey, int np, int nq, int Nel, int P, std::v
                 double EFwd    =  uLFwd[2];
                 double pFwd    =  (EFwd-0.5*rhouFwd*rhouFwd/rhoFwd)*gammaMone;
 
-                double rhoBwd  =  2.0*Umap_v[elid][0][1]-rhoFwd;
-                double rhouBwd =  2.0*Umap_v[elid][1][1]-rhouFwd;//-rhouFwd;
-                double pBwd    =  (2.0*Umap_v[elid][2][1]*gammaMone)-pFwd;
-                double EBwd    =  pBwd/(gammaMone)+0.5*rhouBwd*rhouBwd/rhoBwd;
+                double rhoBwd  =  Umap_v[Nel-1][0][1];
+                double rhouBwd =  Umap_v[Nel-1][1][1];//-rhouFwd;
+                double EBwd    =  Umap_v[Nel-1][2][1];
 
                 // std::cout << "bcs 0 left " << bc[0][0] << " " << rhoFwd << " " << rhoBwd << std::endl; 
                 // std::cout << "bcs 1 left " << bc[0][1] << " " << rhouFwd << " " << rhouBwd << std::endl; 
@@ -1285,11 +1350,9 @@ void CalculateRHSWeakFREuler(Basis* bkey, int np, int nq, int Nel, int P, std::v
                 double EFwd    =  uRFwd[2];
                 double pFwd    =  (EFwd-0.5*rhouFwd*rhouFwd/rhoFwd)*gammaMone;
 
-
-                double rhoBwd  =   2.0*Umap_v[elid][0][0]-rhoFwd;
-                double rhouBwd =   2.0*Umap_v[elid][1][0]-rhouFwd;//-rhouFwd;
-                double pBwd    =   (2.0*Umap_v[elid][2][0]*gammaMone)-pFwd;
-                double EBwd    =   pBwd/(gammaMone)+0.5*rhouBwd*rhouBwd/rhoBwd;
+                double rhoBwd  =   Umap_v[0][0][0];
+                double rhouBwd =   Umap_v[0][1][0];//-rhouFwd;
+                double EBwd    =   Umap_v[0][2][0];
 
                 // std::cout << "bcs 0 right " << bc[1][0] << " " << rhoFwd << " " << rhoBwd << std::endl; 
                 // std::cout << "bcs 1 right " << bc[1][1] << " " << rhouFwd << " " << rhouBwd << std::endl; 
