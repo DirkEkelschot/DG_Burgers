@@ -417,7 +417,7 @@ void run_new_basis_test(std::vector<double> zq, std::vector<double>  wq, int nq,
     // MODAL BASIS TEST USING THE NEW IMPLEMENTATION
 
     Basis* bModalkey = new Basis("GaussLegendre",
-                       "Modal",
+                       "Modal2",
                        zq,wq,P,nq);
 
     std::vector<std::vector<double> > DmatModal = bModalkey->GetD();
@@ -430,30 +430,39 @@ void run_new_basis_test(std::vector<double> zq, std::vector<double>  wq, int nq,
         soloutnewmodal << zq[j] << " ";
     }
     soloutnewmodal << std::endl;
-
+    std::cout << "basis " << std::endl;
     for(int i=0;i<(P+1);i++)
     {
         for(int j=0;j<nq;j++)
         {
             soloutnewmodal << BmatModal[i][j] << " ";
+            std::cout << BmatModal[i][j] << " ";
         }
         soloutnewmodal << std::endl;
+        std::cout << std::endl;
     }
 
     soloutnewmodal.close();
-
+    std::cout << "end basis " << std::endl;
 
     ofstream diffoutnewmodal;
     diffoutnewmodal.open("new_diff_modal_basis.out");
+    std::cout << "gradients " << std::endl;
     for(int i=0;i<(P+1);i++)
     {
         for(int j=0;j<nq;j++)
         {
             diffoutnewmodal << DmatModal[i][j] << " ";
+            std::cout << DmatModal[i][j] << " ";
         }
         diffoutnewmodal << std::endl;
+        std::cout << std::endl;
     }
+    std::cout << "end gradients" << std::endl;
     diffoutnewmodal.close();
+
+
+
 
 }
 
@@ -541,14 +550,14 @@ double EvaluateFromNodalBasis(int P,
     double res = 0.0;
     int numModes = P + 1;
 
-    if(ptype == "GL")
+    if(ptype == "GaussLegendre")
     {
         for(int i=0;i<(P+1);i++)
         {
             res = res + coeff[i]*hgj(i, xref, zquad.data(), numModes, 0.0, 0.0);
         }
     }
-    if(ptype == "GLL")
+    if(ptype == "GaussLegendreLobatto")
     {
         for(int i=0;i<(P+1);i++)
         {

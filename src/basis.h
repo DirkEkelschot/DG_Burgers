@@ -24,6 +24,7 @@ class Basis {
 
             std::vector<std::vector<double> > GetB();
             std::vector<std::vector<double> > GetD();
+            std::string GetBtype();
 
     private:
         std::vector<std::vector<double> > m_bdata_out;

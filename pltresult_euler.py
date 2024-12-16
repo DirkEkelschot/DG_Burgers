@@ -36,10 +36,10 @@ P   = int(float(inputs_map['PolynomialOrder']))
 Nel = int(float(inputs_map['nElements']))
 npo = int(float(inputs_map['nQuadrature']))
 
-
-    
+print(inputs_map)
+compare = 1
 conv = np.loadtxt('dgdataEuler.in')
-conv_o = np.loadtxt('dgdataEuler.out')
+conv_o = np.loadtxt('solution_'+inputs_map['BasisType']+'.out')
 x = conv[:,0]
 rho = conv[:,1]
 rhou = conv[:,2]
@@ -95,6 +95,8 @@ for i in range(0,Nel):
     # plt.plot(xplot,rhouplot_o,'--or')
     # plt.plot(xplot,rhoEplot_o,'--ok')
     # plt.plot(xplot,fplot,'-og')
+
+
 
 
 

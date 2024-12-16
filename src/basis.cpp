@@ -73,58 +73,65 @@ Basis::Basis(std::string pt,
 
 
 
-    // if(btype == "Modal")
-    // {
-    //     for (int i = 0; i < numPoints; ++i)
-    //     {
-    //         m_bdata[i]             = 0.5 * (1 - z[i]);
-    //         m_bdata[numPoints + i] = 0.5 * (1 + z[i]);
+    if(btype == "Modal2")
+    {
+        for (int i = 0; i < numPoints; ++i)
+        {
+            m_bdata[i]             = 0.5 * (1 - z[i]);
+            m_bdata[numPoints + i] = 0.5 * (1 + z[i]);
+        }
 
-    //         m_dbdata[i]             = -0.5;
-    //         m_dbdata[numPoints + i] = 0.5;
-    //     }
+        std::vector<double> diff_mode0(nq);
+        for(int i=0;i<nq;i++)
+        {
+            diff_mode0[i] = 0;
 
-    //     mode = m_bdata.data() + 2 * numPoints;
+            for(int j=0;j<nq;j++)
+            {
+                diff_mode0[i] = diff_mode0[i] + D[i][j]*m_bdata[j];
+                m_dbdata[i]   = diff_mode0[i];
+            }
+        }
 
-    //     for (int p = 2; p < numModes; ++p, mode += numPoints)
-    //     {
-    //         // polylib::jacobfd(numPoints, z.data(), mode, NULL, p - 1, 1.0,
-    //                         // 1.0);
-    //         std::vector<double> phi1(nq);
-    //         polylib::jacobfd(nq, z.data(), phi1.data(), NULL, p-1, 1.0, 1.0);
-    //         for (int i = 0; i < numPoints; ++i)
-    //         {
-    //             // mode[i] *= m_bdata[i] * m_bdata[numPoints + i];
-    //             phi1[i] = ((1-z[i])/2)*((1+z[i])/2)*phi1[i];
-    //             m_dbdata[p*nq+i] = phi1[i];
-    //         }
+        std::vector<double> diff_mode1(nq);
+        for(int i=0;i<nq;i++)
+        {
+            diff_mode1[i] = 0;
 
-           
+            for(int j=0;j<nq;j++)
+            {
+                diff_mode1[i] = diff_mode1[i] + D[i][j]*m_bdata[numPoints+j];
+                m_dbdata[numPoints + i] = diff_mode1[i];
+            }
+        }
 
-    //         std::vector<double> diff_mode(nq);
+        mode = m_bdata.data() + 2 * numPoints;
 
-    //         for(int i=0;i<nq;i++)
-    //         {
-    //             diff_mode[i] = 0;
+        for (int p = 2; p < numModes; ++p, mode += numPoints)
+        {
+            polylib::jacobfd(numPoints, z.data(), mode, NULL, p - 2, 1.0,
+                                1.0);
 
-    //             for(int j=0;j<nq;j++)
-    //             {
-    //                 diff_mode[i] = diff_mode[i] + D[i][j]*phi1[j];
-    //             }
+            for (int i = 0; i < numPoints; ++i)
+            {
+                mode[i] *= m_bdata[i] * m_bdata[numPoints + i];
+            }
 
-    //             diff_mode[i]     = diff_mode[i] / 1.0;
-    //             m_dbdata[p*nq+i] = diff_mode[i] / 1.0;
-    //         }
-    //     }
+            std::vector<double> diff_mode(nq);
 
-        
-    //     // define derivative basis
-    //     // cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
-    //     //             numPoints, numModes, numPoints, 1.0, DinNew.data(), 
-    //     //             numPoints, m_bdata.data(), numPoints, 0.0, 
-    //     //             m_dbdata.data(), numPoints);
+            for(int i=0;i<nq;i++)
+            {
+                diff_mode[i] = 0;
 
-    // }
+                for(int j=0;j<nq;j++)
+                {
+                    diff_mode[i] = diff_mode[i] + D[i][j]*m_bdata[p*numPoints+j];
+                    m_dbdata[p*numPoints+i] = diff_mode[i];
+                }
+            }
+        }
+
+    }
 
     if(btype == "Modal")
     {
@@ -282,6 +289,11 @@ std::vector<std::vector<double> > Basis::GetB()
 std::vector<std::vector<double> > Basis::GetD()
 {
     return m_dbdata_out;
+}
+
+std::string Basis::GetBtype()
+{
+    return btype;
 }
 
 Basis::~Basis()
