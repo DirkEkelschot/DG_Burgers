@@ -42,8 +42,8 @@ Basis::Basis(std::string pt,
     btype = bt;
 
     int np = P + 1;
-    std::vector<double> zn(np);
-    std::vector<double> wn(np);
+    zn.resize(np);
+    wn.resize(np);
     if(ptype.compare("GaussLegendreLobatto") == 0)
     {
         polylib::zwgll(z.data(), w.data(), nq);
@@ -263,7 +263,7 @@ Basis::Basis(std::string pt,
 
     }
 
-
+    //std::cout << "Basis print out " << btype << std::endl;
     for(int p=0;p<numModes;p++)
     {
         std::vector<double> basis_row(numPoints);
@@ -273,8 +273,10 @@ Basis::Basis(std::string pt,
         {
             basis_row[s]         = m_bdata[p*numPoints+s];
             diff_basis_row[s]    = m_dbdata[p*numPoints+s];
+            //std::cout << basis_row[s] << " "; 
         }
 
+        //std::cout << std::endl;
         m_bdata_out.push_back(basis_row);
         m_dbdata_out.push_back(diff_basis_row);
     }
@@ -289,6 +291,16 @@ std::vector<std::vector<double> > Basis::GetB()
 std::vector<std::vector<double> > Basis::GetD()
 {
     return m_dbdata_out;
+}
+
+std::vector<double> Basis::GetZn()
+{
+    return zn;
+}
+
+std::vector<double> Basis::GetWn()
+{
+    return wn;
 }
 
 std::string Basis::GetBtype()

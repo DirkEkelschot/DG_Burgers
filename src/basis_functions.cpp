@@ -374,7 +374,7 @@ void run_new_basis_test(std::vector<double> zq, std::vector<double>  wq, int nq,
 {
 
     // NODAL BASIS TEST USING THE NEW IMPLEMENTATION
-    Basis* bNodalkey = new Basis("GaussLegendre",
+    Basis* bNodalkey = new Basis("GaussLegendreLobatto",
                        "Nodal",
                        zq,wq,P,nq);
 
@@ -413,11 +413,19 @@ void run_new_basis_test(std::vector<double> zq, std::vector<double>  wq, int nq,
     }
     diffoutnew.close();
 
+    ofstream solout2;
+    solout2.open("new_nodal_points.out");
+    for(int j=0;j<zq.size();j++)
+    {
+            solout2 << zq[j] << endl;
+    }
+    solout2.close();
+
 
     // MODAL BASIS TEST USING THE NEW IMPLEMENTATION
 
-    Basis* bModalkey = new Basis("GaussLegendre",
-                       "Modal2",
+    Basis* bModalkey = new Basis("GaussLegendreLobatto",
+                       "Modal",
                        zq,wq,P,nq);
 
     std::vector<std::vector<double> > DmatModal = bModalkey->GetD();
@@ -430,38 +438,74 @@ void run_new_basis_test(std::vector<double> zq, std::vector<double>  wq, int nq,
         soloutnewmodal << zq[j] << " ";
     }
     soloutnewmodal << std::endl;
-    std::cout << "basis " << std::endl;
+    //std::cout << "basis " << std::endl;
     for(int i=0;i<(P+1);i++)
     {
         for(int j=0;j<nq;j++)
         {
             soloutnewmodal << BmatModal[i][j] << " ";
-            std::cout << BmatModal[i][j] << " ";
+            //std::cout << BmatModal[i][j] << " ";
         }
         soloutnewmodal << std::endl;
-        std::cout << std::endl;
+        //std::cout << std::endl;
     }
 
     soloutnewmodal.close();
-    std::cout << "end basis " << std::endl;
+    //std::cout << "end basis " << std::endl;
 
     ofstream diffoutnewmodal;
     diffoutnewmodal.open("new_diff_modal_basis.out");
-    std::cout << "gradients " << std::endl;
+    //std::cout << "gradients " << std::endl;
     for(int i=0;i<(P+1);i++)
     {
         for(int j=0;j<nq;j++)
         {
             diffoutnewmodal << DmatModal[i][j] << " ";
-            std::cout << DmatModal[i][j] << " ";
+            //std::cout << DmatModal[i][j] << " ";
         }
         diffoutnewmodal << std::endl;
-        std::cout << std::endl;
+        //std::cout << std::endl;
     }
-    std::cout << "end gradients" << std::endl;
+    //std::cout << "end gradients" << std::endl;
     diffoutnewmodal.close();
 
+    ofstream solout22;
+    solout22.open("new_modal_points.out");
+    for(int j=0;j<zq.size();j++)
+    {
+            solout22 << zq[j] << endl;
+    }
+    solout22.close();
 
+
+
+
+    
+    ofstream solout23;
+    solout23.open("ref_basis_points.out");
+
+    int np = P + 1;
+    double xleft = -1.0;
+    double xright = -1.0;
+    
+    std::vector<double> zn = bModalkey->GetZn();
+    
+    for(int u=0;u<P+1;u++)
+    {   
+
+        // phi1[q] = hglj(n, zquad_eval[q], zquad.data(), numModes, 0.0, 0.0);
+
+        double value_left_nodal   = GetNodalBasisValue(P, xleft, u, zn, "GaussLegendre");
+        double value_right_nodal  = GetNodalBasisValue(P, xright, u, zn, "GaussLegendre");
+
+        double value_left_modal  = GetModalBasisValue(P,  xleft, u, zq.size(), "GaussLegendre");
+        double value_right_modal  = GetModalBasisValue(P, xright, u, zq.size(), "GaussLegendre");
+
+        solout23 << xleft << " " << xright << " " << value_left_nodal<< " " << value_right_nodal << " " << value_left_modal << " " << value_right_modal << endl;
+
+    }
+    
+    solout23.close();
 
 
 }
@@ -495,8 +539,8 @@ std::vector<double> ForwardTransform(int P,
     std::vector<double> MassMatElem = GetElementMassMatrix(P,basis,wquad,J);
 
     int ONE_INT=1;
-    double ONE_DOUBLE=1.0;
-    double ZERO_DOUBLE=0.0;
+    double ONE_DOUBLE  = 1.0;
+    double ZERO_DOUBLE = 0.0;
     unsigned char TR = 'T';
     int INFO;
     int LWORK = ncoeffs*ncoeffs;
@@ -527,7 +571,7 @@ std::vector<double> BackwardTransform(int P,
     double sum = 0.0;
     for(int i = 0;i<P+1;i++)
     {
-        std::vector<double> phi1 =basis[i];
+        std::vector<double> phi1 = basis[i];
         for( int j=0;j<nq;j++)
         {
             quad[j] = quad[j]+input_coeff[i]*phi1[j];
@@ -536,6 +580,102 @@ std::vector<double> BackwardTransform(int P,
 
     return quad;
 }
+
+
+std::vector<double> BackwardTransformVal(int P, 
+                                      int iq, 
+                                      std::vector<std::vector<double> > basis,  
+                                      std::vector<double> input_coeff)
+{
+
+    std::vector<double> quad(1,0.0);
+    double sum = 0.0;
+    for(int i = 0;i<P+1;i++)
+    {
+        std::vector<double> phi1 = basis[i];
+        // for( int j=0;j<nq;j++)
+        // {
+            quad[0] = quad[0]+input_coeff[i]*phi1[iq];
+        // }
+    }
+
+    return quad;
+}
+
+
+
+
+
+
+std::vector<double> BackwardTransformValNodal(int P, 
+                                      double xq, 
+                                      std::vector<double> input_coeff,
+                                      std::string ptype)
+{
+    int numModes = P + 1;
+    std::vector<double> zn(P+1,0.0);
+    std::vector<double> wn(P+1,0.0);
+    if(ptype.compare("GaussLegendreLobatto") == 0)
+    {
+        polylib::zwgll(zn.data(), wn.data(), numModes);
+        
+    }
+    if(ptype.compare("GaussLegendre") == 0)
+    {
+        polylib::zwgl(zn.data(), wn.data(), numModes);
+    }
+
+    std::vector<double> quad(1,0.0);
+    double sum = 0.0;
+    for(int i = 0;i<P+1;i++)
+    {
+        double phi1 = polylib::hgj(i, xq, zn.data(), numModes, 0.0, 0.0);
+
+        quad[0] = quad[0]+input_coeff[i]*phi1;
+        
+    }
+
+    return quad;
+}
+
+
+
+
+
+
+std::vector<double> BackwardTransformValModal(int P, 
+                                      double xq, 
+                                      std::vector<double> input_coeff,
+                                      std::string ptype)
+{
+    std::vector<double> quad(1,0.0);
+    int numModes = P + 1;
+    for (int n = 0; n < numModes; ++n)
+    {
+        std::vector<double> phi1(1,0.0);
+        std::vector<double> xqtmp(1,0.0);
+        xqtmp[0] = xq;
+        if(n == 0)
+        {
+            phi1[0] = (1 - xq)/2;
+        }
+        else if(n == P)
+        {
+            phi1[0] = (1 + xq)/2;
+        }
+        else
+        {
+            polylib::jacobfd(1, xqtmp.data(), phi1.data(), NULL, n-1, 1.0, 1.0);
+            phi1[0] = ((1-xq)/2)*((1+xq)/2)*phi1[0];
+        }
+        quad[0] = quad[0]+input_coeff[n]*phi1[0];
+    }
+
+    return quad;
+}
+
+
+
 
 
 
@@ -570,14 +710,74 @@ double EvaluateFromNodalBasis(int P,
 }
 
 
+double GetNodalBasisValue(int P, 
+                              double xref,
+                              int i,
+                              std::vector<double> zquad,
+                              std::string ptype)
+{
+
+    double res = 0.0;
+    int numModes = P + 1;
+    
+    // phi1[q] = hglj(n, zquad_eval[q], zquad.data(), numModes, 0.0, 0.0);
+
+    if(ptype == "GaussLegendre")
+    {
+        // res = hgj(i, zquad.data(), xref, numModes, 0.0, 0.0);
+        res = hgj(i, xref, zquad.data(), numModes, 0.0, 0.0);
+    }
+    if(ptype == "GaussLegendreLobatto")
+    {
+        // res = hglj(i, zquad.data(), xref, numModes, 0.0, 0.0);
+        res = hglj(i, xref, zquad.data(), numModes, 0.0, 0.0);
+    }
+
+
+    return res;
+}
 
 
 
 
 
+double GetModalBasisValue(int P, 
+                              double zref, 
+                              int n,
+                              int nq, 
+                              std::string ptype)
+{
 
+    double res = 0.0;
+    int numModes = P + 1;
 
+    std::vector<std::vector<double> > basis;
+    std::vector<double> zref_tmp(1,0.0);
+    zref_tmp[0] = zref;
 
+    std::vector<double> phi1(1,0.0);
+
+    if(n == 0)
+    {
+        phi1[0] = (1 - zref)/2;
+    }
+    else if(n == P)
+    {
+        
+        phi1[0] = (1 + zref)/2;
+        
+    }
+    else
+    {
+        jacobfd(1, zref_tmp.data(), phi1.data(), NULL, n-1, 1.0, 1.0);
+
+        phi1[0] = ((1-zref)/2)*((1+zref)/2)*phi1[0];
+    }
+    
+    res = phi1[0];
+    // }
+    return res;
+}
 
 
 

@@ -27,6 +27,17 @@ std::vector<std::vector<double> > getModalBasisEval(std::vector<double> zquad_ev
 std::vector<std::vector<double> > getNodalBasisEvalNew(std::vector<double> zquad_eval,std::vector<double> zquad, int P);
 std::vector<std::vector<double> > getModalBasisEval2(std::vector<double> zquad_eval,std::vector<double> zquad, int nq, int np, int P);
 
+double GetNodalBasisValue(int P, 
+                              double xref,
+                              int i,
+                              std::vector<double> zquad,
+                              std::string ptype);
+
+double GetModalBasisValue(int P, 
+                              double zref, 
+                              int n,
+                              int nq, 
+                              std::string ptype);
 
 
 std::vector<double> GetElementMassMatrix(int P, 
@@ -37,6 +48,20 @@ std::vector<double> GetElementMassMatrix(int P,
 
 
 
+std::vector<double> BackwardTransformVal(int P, 
+                                      int iq, 
+                                      std::vector<std::vector<double> > basis,  
+                                      std::vector<double> input_coeff);
+
+std::vector<double> BackwardTransformValNodal(int P, 
+                                      double xq, 
+                                      std::vector<double> input_coeff,
+                                      std::string ptype);
+
+std::vector<double> BackwardTransformValModal(int P, 
+                                      double xq, 
+                                      std::vector<double> input_coeff,
+                                      std::string ptype);
 
 std::vector<double> BackwardTransform(int P, int nq, std::vector<std::vector<double> > basis, std::vector<double> input_coeff);
 std::vector<double> ForwardTransform(int P, std::vector<std::vector<double> > basis, std::vector<double>wquad, int nq, double J, std::vector<double> input_quad);

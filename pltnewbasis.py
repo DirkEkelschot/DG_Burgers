@@ -5,6 +5,15 @@ import sys
 import argparse
 import seaborn as sns
 
+
+edge_points = np.loadtxt('ref_basis_points.out')
+
+nodal_l = edge_points[:,0]
+nodal_r = edge_points[:,1]
+
+modal_l = edge_points[:,2]
+modal_r = edge_points[:,3]
+
 plt.figure(1)
 nodal          = np.loadtxt('new_nodal_basis.out')
 nodal_deriv    = np.loadtxt('new_diff_nodal_basis.out')
@@ -34,6 +43,10 @@ for i in range(0,nummodes):
     plt.plot(xnodal_nodes,nodal[i+1],'-',color=colors[i])
 
 plt.plot(xnodal_nodes,basis_sum,'--',color='k')
+
+for i in range(0,len(nodal_l)):
+    plt.plot(-0.25,nodal_l[i],'ok')
+    plt.plot(0.25,nodal_r[i],'ok')
 
 
 
@@ -71,4 +84,10 @@ for i in range(0,nummodes):
     print(nodal_deriv[i])
 
 plt.plot(xnodal_nodes,basis_sum,'--',color='k')
+
+for i in range(0,len(modal_l)):
+    plt.plot(-0.25,modal_l[i],'ok')
+    plt.plot(0.25,modal_r[i],'ok')
+
+
 plt.show()

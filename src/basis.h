@@ -24,6 +24,8 @@ class Basis {
 
             std::vector<std::vector<double> > GetB();
             std::vector<std::vector<double> > GetD();
+            std::vector<double> GetZn();
+            std::vector<double> GetWn();
             std::string GetBtype();
 
     private:
@@ -32,6 +34,9 @@ class Basis {
 
         std::vector<double> m_bdata;
         std::vector<double> m_dbdata;
+
+        std::vector<double> zn;
+        std::vector<double> wn;
 
         std::string ptype;
         std::string btype;

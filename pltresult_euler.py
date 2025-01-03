@@ -39,6 +39,7 @@ npo = int(float(inputs_map['nQuadrature']))
 print(inputs_map)
 compare = 1
 conv = np.loadtxt('dgdataEuler.in')
+print('reading in solution_'+inputs_map['BasisType']+'.out')
 conv_o = np.loadtxt('solution_'+inputs_map['BasisType']+'.out')
 x = conv[:,0]
 rho = conv[:,1]

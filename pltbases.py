@@ -32,8 +32,8 @@ print(npo_m)
 num_lines      = P + 1;
 colors         = [mako_cmap((i) / num_lines) for i in range(num_lines)]
 
-nodal          = np.loadtxt('nodal_basis.out')
-nodal_points   = np.loadtxt('nodal_points.out')
+nodal          = np.loadtxt('new_nodal_basis.out')
+nodal_points   = np.loadtxt('new_nodal_points.out')
 print(len(nodal_points))
 nodal_points_y = np.zeros((len(nodal_points),1))
 
@@ -56,8 +56,8 @@ plt.legend()
 # print(sum)
 # plt.plot(nodal[0:offset,0],sum,'r')
 
-modal          = np.loadtxt('modal_basis.out')
-modal_points   = np.loadtxt('modal_points.out')
+modal          = np.loadtxt('new_modal_basis.out')
+modal_points   = np.loadtxt('new_modal_points.out')
 modal_points_y = np.zeros((len(modal_points),1))
 offset = (npo_m)
 sum = np.zeros((offset,1))

@@ -102,15 +102,6 @@ void printProgressBar(int current, int total, int width = 50) {
     std::cout.flush();
 }
 
-// void *lagrange_basis(int np, int P, int i, double *z, double *zwgll, double *phi)
-// {
-//     for (int q = 0; q < np; ++q)
-//     {
-//         phi[q] = hglj(i, z[q], zwgll, P, 0.0, 0.0);
-//     }
-
-//     return 0;
-// }
 
 
 std::vector<double> getLagrangeBasisFunction(int i, std::vector<double> zquad, int nq, std::vector<double> z, int np, int P)
@@ -129,144 +120,6 @@ std::vector<double> getLagrangeBasisFunction(int i, std::vector<double> zquad, i
     }
     return phi1;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-// std::vector<double> GetElementMassMatrix(int P, 
-//                             std::vector<std::vector<double> > basis,
-//                             std::vector<double> wquad,
-//                             double J)
-// {
-//     std::vector<double> MassMatElem((P+1)*(P+1),0.0);
-//     int np = wquad.size();
-//     for(int i=0;i<P+1;i++)
-//     {
-//         std::vector<double> phi1 = basis[i];
-//         for(int j=0;j<P+1;j++)
-//         {
-//             std::vector<double> phi2 = basis[j];
-//             MassMatElem[i*(P+1)+j] = J*integr(np, wquad.data(), phi1.data(), phi2.data());
-//         }
-//     }
-//     return MassMatElem;
-// }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// std::vector<double> ForwardTransform(int P, 
-//                                      int np,
-//                                      std::vector<std::vector<double> > basis, 
-//                                      std::vector<double>wquad, int nq,
-//                                      double J, 
-//                                      std::vector<double> input_quad)
-// {
-    
-//     std::vector<double> coeff(P+1);
-//     int ncoeffs     = P+1;
-//     double *Icoeff  = dvector(ncoeffs);
-    
-//     for(int j=0;j<P+1;j++)
-//     {
-//         std::vector<double> phi1 = basis[j];
-
-//         Icoeff[j] = J*integr(nq, wquad.data(), phi1.data(), input_quad.data());
-//     }
-
-//     std::vector<double> MassMatElem = GetElementMassMatrix(P,basis,wquad,J);
-
-//     int ONE_INT=1;
-//     double ONE_DOUBLE=1.0;
-//     double ZERO_DOUBLE=0.0;
-//     unsigned char TR = 'T';
-//     int INFO;
-//     int LWORK = ncoeffs*ncoeffs;
-//     double *WORK = new double[LWORK];
-//     int *ip = ivector(ncoeffs);
-//     // Create inverse Mass matrix.
-//     dgetrf_(&ncoeffs, &ncoeffs, MassMatElem.data(), &ncoeffs, ip, &INFO);
-//     dgetri_(&ncoeffs, MassMatElem.data(), &ncoeffs, ip, WORK, &LWORK, &INFO);
-//     // Apply InvMass to Icoeffs hence M^-1 Icoeff = uhat
-//     dgemv_(&TR,&ncoeffs,&ncoeffs,&ONE_DOUBLE,MassMatElem.data(),&ncoeffs,Icoeff,&ONE_INT,&ZERO_DOUBLE,coeff.data(),&ONE_INT);
-//     return coeff;
-// }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// std::vector<double> BackwardTransform(int P, 
-//                                       int np, 
-//                                       std::vector<std::vector<double> > basis,  
-//                                       std::vector<double> input_coeff)
-// {
-
-//     std::vector<double> quad(np,0.0);
-//     double sum = 0.0;
-//     for(int i = 0;i<P+1;i++)
-//     {
-//         std::vector<double> phi1 =basis[i];
-//         for( int j=0;j<np;j++)
-//         {
-//             quad[j] = quad[j]+input_coeff[i]*phi1[j];
-//         }
-//     }
-
-//     return quad;
-// }
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -294,289 +147,6 @@ std::vector<double> FilterNodalCoeffs(std::vector<double> zquad,
     return coeffs_update;
 
 }
-
-
-
-
-
-/*
-std::vector<std::vector<double> > getModalBasis(std::vector<double> zquad, int nq, int np, int P)
-{
-
-    if(nq != zquad.size())
-    {
-        std::cout << "error: nq != zquad.size() " << std::endl;
-    }
-    int numModes = P + 1;
-
-
-    std::vector<std::vector<double> > basis;
-    
-    for(int n=0;n<numModes;n++)
-    {   
-        std::vector<double> phi1(np,0.0);
-        if(n == 0)
-        {
-            for(int k=0;k<np;k++)
-            {
-                phi1[k] = (1 - zquad[k])/2;
-            }
-        }
-        else if(n == P)
-        {
-            for(int k=0;k<np;k++)
-            {
-                phi1[k] = (1 + zquad[k])/2;
-            }
-        }
-        else
-        {
-            jacobfd(np, zquad.data(), phi1.data(), NULL, n-1, 1.0, 1.0);
-
-            for(int k=0;k<np;k++)
-            {
-                phi1[k] = ((1-zquad[k])/2)*((1+zquad[k])/2)*phi1[k];
-            }
-        }
-        
-        basis.push_back(phi1);
-    }
-    return basis;
-}
-*/
-
-
-
-
-
-// std::vector<std::vector<double> > getModalBasisEval(std::vector<double> zquad_eval, std::vector<double> zquad, int nq, int np, int P)
-// {
-
-   
-//     int numModes = P + 1;
-
-//     std::vector<std::vector<double> > basis;
-    
-//     for(int n=0;n<numModes;n++)
-//     {   
-//         std::vector<double> phi1(np,0.0);
-
-//         if(n == 0)
-//         {
-//             for(int k=0;k<np;k++)
-//             {
-//                 phi1[k] = (1 - zquad[k])/2;
-//             }
-//         }
-//         else if(n == P)
-//         {
-//             for(int k=0;k<np;k++)
-//             {
-//                 phi1[k] = (1 + zquad[k])/2;
-//             }
-//         }
-//         else
-//         {
-//             jacobfd(np, zquad.data(), phi1.data(), NULL, n-1, 1.0, 1.0);
-
-//             for(int k=0;k<np;k++)
-//             {
-//                 phi1[k] = ((1-zquad[k])/2)*((1+zquad[k])/2)*phi1[k];
-//             }
-//         }
-        
-//         basis.push_back(phi1);
-//     }
-//     return basis;
-// }
-
-
-
-
-
-
-// std::vector<std::vector<double> > getLegendreBasisEval(std::vector<double> zquad_eval, std::vector<double> zquad, int nq, int np, int P)
-// {
-
-   
-//     int numModes = P + 1;
-
-//     std::vector<std::vector<double> > basis;
-    
-//     for(int n=0;n<numModes;n++)
-//     {   
-//         std::vector<double> phi1(np,0.0);
-
-//         if(n == 0)
-//         {
-//             for(int k=0;k<np;k++)
-//             {
-//                 phi1[k] = 1.0;
-//             }
-//         }
-//         else if(n == 1)
-//         {
-//             for(int k=0;k<np;k++)
-//             {
-//                 phi1[k] = zquad[k];
-//             }
-//         }
-//         else
-//         {
-//             jacobfd(np, zquad.data(), phi1.data(), NULL, n, 0.0, 0.0);
-
-//             for(int k=0;k<np;k++)
-//             {
-//                 phi1[k] = phi1[k];
-//             }
-//         }
-        
-//         basis.push_back(phi1);
-//     }
-//     return basis;
-// }
-
-
-
-// std::vector<std::vector<double> > getRadauPlusBasisEval(std::vector<double> zquad_eval, std::vector<double> zquad, int nq, int np, int P)
-// {
-
-//     int numModes = P + 1;
-
-//     std::vector<std::vector<double> > basis;
-    
-//     for(int n=0;n<numModes;n++)
-//     {   
-//         std::vector<double> phi1(zquad_eval.size(),0.0);
-
-//         if(n == 0)
-//         {
-//             jacobfd(np, zquad_eval.data(), phi1.data(), NULL, 1, 0.0, 0.0);
-//             for(int k=0;k<zquad_eval.size();k++)
-//             {
-//                 phi1[k] = 0.0;
-//             }
-//         }
-//         else
-//         {
-//             std::vector<double> phi2(zquad_eval.size(),0.0);
-
-//             jacobfd(np, zquad_eval.data(), phi1.data(), NULL, n, 0.0, 0.0);
-//             jacobfd(np, zquad_eval.data(), phi2.data(), NULL, n-1, 0.0, 0.0);
-
-//             for(int k=0;k<zquad_eval.size();k++)
-//             {
-//                 phi1[k] = 0.5*(phi1[k] + phi2[k]);
-//             }
-//         }
-        
-//         basis.push_back(phi1);
-//     }
-//     return basis;
-// }
-
-
-// std::vector<std::vector<double> > getRadauMinusBasisEval(std::vector<double> zquad_eval, std::vector<double> zquad, int nq, int np, int P)
-// {
-
-   
-//     int numModes = P + 1;
-
-//     std::vector<std::vector<double> > basis;
-    
-//     for(int n=0;n<numModes;n++)
-//     {   
-//         std::vector<double> phi1(zquad_eval.size(),0.0);
-
-//         if(n == 0)
-//         {
-//             jacobfd(np, zquad.data(), phi1.data(), NULL, 1, 0.0, 0.0);
-//             for(int k=0;k<zquad_eval.size();k++)
-//             {
-//                 phi1[k] = 0.0;
-//             }
-//         }
-//         else
-//         {
-//             std::vector<double> phi2(zquad_eval.size(),0.0);
-
-//             jacobfd(np, zquad.data(), phi1.data(), NULL, n, 0.0, 0.0);
-//             jacobfd(np, zquad.data(), phi2.data(), NULL, n-1, 0.0, 0.0);
-
-//             for(int k=0;k<zquad_eval.size();k++)
-//             {
-//                 phi1[k] = pow(-1, n)*0.5*(phi1[k] - phi2[k]);
-//             }
-//         }
-        
-//         basis.push_back(phi1);
-//     }
-//     return basis;
-// }
-
-
-
-
-
-
-
-
-
-// std::vector<std::vector<double> > getNodalBasis(std::vector<double> zquad, int nq, int np, int P)
-// {
-
-//     if(nq != zquad.size())
-//     {
-//         std::cout << "error: nq != zquad.size() " << std::endl;
-//     }
-//     int numModes = P + 1;
-
-
-//     std::vector<std::vector<double> > basis;
-    
-//     for(int n=0;n<numModes;n++)
-//     {
-//         std::vector<double> phi1(nq);
-//         for (int q = 0; q < nq; ++q)
-//         {
-//             phi1[q] = hglj(n, zquad[q], zquad.data(), numModes, 0.0, 0.0);
-//         }
-//         basis.push_back(phi1);
-//     }
-//     return basis;
-// }
-
-
-
-// std::vector<std::vector<double> > getNodalBasisEval(std::vector<double> zquad_eval,std::vector<double> zquad, int nq, int np, int P)
-// {
-
-//     if(nq != zquad.size())
-//     {
-//         std::cout << "error: nq != zquad.size() " << std::endl;
-//     }
-//     int numModes = P + 1;
-
-
-//     std::vector<std::vector<double> > basis;
-    
-//     for(int n=0;n<numModes;n++)
-//     {
-//         std::vector<double> phi1(zquad_eval.size());
-//         for (int q = 0; q < zquad_eval.size(); ++q)
-//         {
-//             phi1[q] = hglj(n, zquad_eval[q], zquad.data(), numModes, 0.0, 0.0);
-//         }
-//         basis.push_back(phi1);
-//     }
-//     return basis;
-// }
-
-
-
-
-
-
 
 
 
@@ -1199,11 +769,18 @@ void CalculateRHSWeakFREuler(int t, Basis* bkey, int np, int nq, int Nel, int P,
     std::vector<double> quad_eq0(nq,0.0);
     std::vector<double> quad_eq1(nq,0.0);
     std::vector<double> quad_eq2(nq,0.0);
+
+    std::vector<double> quad_eq0_trace(nq,0.0);
+    std::vector<double> quad_eq1_trace(nq,0.0);
+    std::vector<double> quad_eq2_trace(nq,0.0);
+
     std::vector<double> dx(Nel);
 
     std::vector<double> Fcoeff_eq0(Nel*(P+1),0.0);
     std::vector<double> Fcoeff_eq1(Nel*(P+1),0.0);
     std::vector<double> Fcoeff_eq2(Nel*(P+1),0.0);
+
+    std::map<int,std::vector<std::vector<double> > > traces;
 
     for(int eln=0;eln<Nel;eln++)
     {
@@ -1219,11 +796,19 @@ void CalculateRHSWeakFREuler(int t, Basis* bkey, int np, int nq, int Nel, int P,
             quad_eq0[i] = F_DG[0][i+eln*nq];
             quad_eq1[i] = F_DG[1][i+eln*nq];
             quad_eq2[i] = F_DG[2][i+eln*nq];
+
+            quad_eq0_trace[i] = U_DG[0][i+eln*nq];
+            quad_eq1_trace[i] = U_DG[1][i+eln*nq];
+            quad_eq2_trace[i] = U_DG[2][i+eln*nq];
         }
 
         std::vector<double> coeff_eq0 = ForwardTransform(P, Bmat, wquad, nq, J, quad_eq0);
         std::vector<double> coeff_eq1 = ForwardTransform(P, Bmat, wquad, nq, J, quad_eq1);
         std::vector<double> coeff_eq2 = ForwardTransform(P, Bmat, wquad, nq, J, quad_eq2);
+
+        std::vector<double> coeff_eq0_trace = ForwardTransform(P, Bmat, wquad, nq, J, quad_eq0_trace);
+        std::vector<double> coeff_eq1_trace = ForwardTransform(P, Bmat, wquad, nq, J, quad_eq1_trace);
+        std::vector<double> coeff_eq2_trace = ForwardTransform(P, Bmat, wquad, nq, J, quad_eq2_trace);
 
         // std::vector<double> quad_e0_recov = BackwardTransform(P,  nq,  Bmat,  coeff_eq0);
         // std::vector<double> quad_e1_recov = BackwardTransform(P,  nq,  Bmat,  coeff_eq1);
@@ -1236,30 +821,88 @@ void CalculateRHSWeakFREuler(int t, Basis* bkey, int np, int nq, int Nel, int P,
         //     std::cout << quad_eq2[i] << " -- " << quad_e2_recov[i]/J << std::endl;
         // }
 
-        // if(btype == "Nodal")
-        // {
-        //     double value_left  = EvaluateFromNodalBasis(P, -1, coeff_eq0, zquad, ptype);
-        //     double value_right = EvaluateFromNodalBasis(P,  1, coeff_eq0, zquad, ptype);
+        std::vector<double> quad_e0_recov = BackwardTransform(P,  nq,  Bmat,  coeff_eq0);
 
-        //     double value_left_int  = EvaluateFromNodalBasis(P, zquad[0], coeff_eq0, zquad, ptype);
-        //     double value_right_int = EvaluateFromNodalBasis(P,  zquad[nq-1], coeff_eq0, zquad, ptype);
+        std::vector<std::vector<double> > trace(3);
 
-        //     std::cout << -1 << " " << zquad[0] << " -- " <<  zquad[nq-1] << " " << 1 << std::endl;
-        //     std::cout << J << std::endl;
-        //     std::cout << eln << " coeff_eq0 " << coeff_eq0.size() << " (" << value_left << " - " << value_right << ") (" << value_left_int << " - " << value_right_int << ")" << std::endl;
-        // }
+        if(btype == "Nodal")
+        {
+            std::vector<double> zn = bkey->GetZn();
+            // double value_left  = EvaluateFromNodalBasis(P, -1, coeff_eq0, zn, ptype);
+            // double value_right = EvaluateFromNodalBasis(P,  1, coeff_eq0, zn, ptype);
 
-        // if(btype == "Modal")
-        // {
-        //     double value_left  = EvaluateFromModalBasis(P, -1, nq, coeff_eq0, ptype);
-        //     double value_right = EvaluateFromModalBasis(P,  1, nq, coeff_eq0, ptype);
+            // double value_left_int  = EvaluateFromNodalBasis(P, zquad[0], coeff_eq0, zn, ptype);
+            // double value_right_int = EvaluateFromNodalBasis(P,  zquad[nq-1], coeff_eq0, zn, ptype);
 
-        //     double value_left_int  = EvaluateFromModalBasis(P, zquad[0], nq, coeff_eq0, ptype);
-        //     double value_right_int = EvaluateFromModalBasis(P, zquad[nq-1], nq, coeff_eq0, ptype);
+            std::vector<double> lrho = BackwardTransformValNodal(P, -1.0, coeff_eq0_trace, ptype);
+            std::vector<double> rrho = BackwardTransformValNodal(P, 1.0, coeff_eq0_trace, ptype);
 
-        //     std::cout << -1 << " " << zquad[0] << " -- " <<  zquad[nq-1] << " " << 1 << std::endl;
-        //     std::cout << eln << " coeff_eq0 " << coeff_eq0.size() << " (" << value_left << " - " << value_right << ") (" << value_left_int << " - " << value_right_int << ")" << std::endl;
-        // }
+            std::vector<double> lrhou = BackwardTransformValNodal(P, -1.0, coeff_eq1_trace, ptype);
+            std::vector<double> rrhou = BackwardTransformValNodal(P, 1.0, coeff_eq1_trace, ptype);
+
+            std::vector<double> lrhoE = BackwardTransformValNodal(P, -1.0, coeff_eq2_trace, ptype);
+            std::vector<double> rrhoE = BackwardTransformValNodal(P, 1.0, coeff_eq2_trace, ptype);
+   
+            // std::vector<double> vleft3 = BackwardTransformValNodal(P, -1, coeff_eq0, ptype);
+            // std::vector<double> vright3 = BackwardTransformValNodal(P, 1, coeff_eq0, ptype);
+
+            std::vector<double> row0(2,0);
+            row0[0] = lrho[0];
+            row0[1] = rrho[0];
+            trace[0] = row0;
+            std::vector<double> row1(2,0);
+            row1[0] = lrhou[0];
+            row1[1] = rrhou[0];
+            trace[1] = row1;
+            std::vector<double> row2(2,0);
+            row2[0] = lrhoE[0];
+            row2[1] = rrhoE[0];
+            trace[2] = row2;
+
+            // std::cout << "==========================NODAL----============================"<<std::endl;
+            // std::cout <<  vleft2[0] << " " << vright2[0]  << " huh " << vleft3[0] << " " << vright3[0]  << std::endl;
+            // std::cout <<  value_left_int << " " <<value_right_int   << " " << quad_eq0[0] << " " << quad_eq0[nq-1] << " " << quad_e0_recov[0] << " " << quad_e0_recov[nq-1] << std::endl;
+            // std::cout << "==============================================================="<<std::endl;
+        
+        
+        }
+
+        if(btype == "Modal")
+        {
+            // double value_left  = EvaluateFromModalBasis(P, -1, nq, coeff_eq0, ptype);
+            // double value_right = EvaluateFromModalBasis(P,  1, nq, coeff_eq0, ptype);
+
+            // double value_left_int  = EvaluateFromModalBasis(P, zquad[0], nq, coeff_eq0, ptype);
+            // double value_right_int = EvaluateFromModalBasis(P, zquad[nq-1], nq, coeff_eq0, ptype);
+
+
+            std::vector<double> lrho = BackwardTransformValModal(P, -1.0, coeff_eq0_trace, ptype);
+            std::vector<double> rrho = BackwardTransformValModal(P, 1.0,  coeff_eq0_trace, ptype);
+
+            std::vector<double> lrhou = BackwardTransformValModal(P, -1.0, coeff_eq1_trace, ptype);
+            std::vector<double> rrhou = BackwardTransformValModal(P, 1.0, coeff_eq1_trace, ptype);
+
+            std::vector<double> lrhoE = BackwardTransformValModal(P, -1.0, coeff_eq2_trace, ptype);
+            std::vector<double> rrhoE = BackwardTransformValModal(P, 1.0, coeff_eq2_trace, ptype);
+   
+            // std::vector<double> vleft3 = BackwardTransformValModal(P, -1.0, coeff_eq0, ptype);
+            // std::vector<double> vright3 = BackwardTransformValModal(P, 1.0, coeff_eq0, ptype);  
+           
+            
+            std::vector<double> row0(2,0);
+            row0[0] = lrho[0];
+            row0[1] = rrho[0];
+            trace[0] = row0;
+            std::vector<double> row1(2,0);
+            row1[0] = lrhou[0];
+            row1[1] = rrhou[0];
+            trace[1] = row1;
+            std::vector<double> row2(2,0);
+            row2[0] = lrhoE[0];
+            row2[1] = rrhoE[0];
+            trace[2] = row2;
+        
+        }
         
         for(int i = 0;i < (P+1);i++)
         {
@@ -1269,6 +912,8 @@ void CalculateRHSWeakFREuler(int t, Basis* bkey, int np, int nq, int Nel, int P,
 
             //std::cout << Fcoeff_eq0[i+eln*(P+1)]  << " " << Fcoeff_eq1[i+eln*(P+1)]  << " " << Fcoeff_eq2[i+eln*(P+1)]  << std::endl;
         }
+
+        traces[eln] = trace;
         //std::cout << std::endl;
     }
 
@@ -1286,7 +931,7 @@ void CalculateRHSWeakFREuler(int t, Basis* bkey, int np, int nq, int Nel, int P,
     std::map<int,std::vector<std::vector<double> > > Fmap_v;
     std::map<int,std::vector<std::vector<double> > >::iterator itmv;
     //============================================================
-    for(itmv=Umap_v.begin();itmv!=Umap_v.end();itmv++)
+    for(itmv=traces.begin();itmv!=traces.end();itmv++)
     {
         
         int nvar = 3;
@@ -1302,15 +947,19 @@ void CalculateRHSWeakFREuler(int t, Basis* bkey, int np, int nq, int Nel, int P,
         std::vector<double> FRFwd(nvar,0.0);
         std::vector<double> FRBwd(nvar,0.0);
 
-        
+        // std::cout << "0 (" << Umap_v[elid][0][0] << ", " << traces[elid][0][0] << ") " << " (" << Umap_v[elid][1][0] << ", " << traces[elid][1][0] << ") " << " (" << Umap_v[elid][2][0] << ", " << traces[elid][2][0] << ") " << std::endl;
+        // std::cout << "1 (" << Umap_v[elid][0][1] << ", " << traces[elid][0][1] << ") " << " (" << Umap_v[elid][1][1] << ", " << traces[elid][1][1] << ") " << " (" << Umap_v[elid][2][1] << ", " << traces[elid][2][1] << ") " << std::endl;
+
 
         // for(int n=0;n<nvar;n++)
         // {
             if(elid == 0)
             {
-                uLFwd[0] = Umap_v[elid][0][0];
-                uLFwd[1] = Umap_v[elid][1][0];
-                uLFwd[2] = Umap_v[elid][2][0];
+                uLFwd[0] = traces[elid][0][0];
+                uLFwd[1] = traces[elid][1][0];
+                uLFwd[2] = traces[elid][2][0];
+
+                // std::cout << "(" << Umap_v[elid][0][0] << ", " << traces[elid][0][0] << ") " << " (" << Umap_v[elid][1][0] << ", " << traces[elid][1][0] << ") " << " (" << Umap_v[elid][2][0] << ", " << traces[elid][2][0] << ") " << std::endl;
 
                 
                 double rhoFwd  =  uLFwd[0];
@@ -1329,36 +978,31 @@ void CalculateRHSWeakFREuler(int t, Basis* bkey, int np, int nq, int Nel, int P,
                 double pBwd    = (2.0*bc[0][2]*gammaMone)-pFwd;
                 double EBwd    =  pBwd/(gammaMone)+0.5*rhouBwd*rhouBwd/rhoBwd;
 
-                // std::cout << "bcs 0 left " << bc[0][0] << " " << rhoFwd << " " << rhoBwd << std::endl; 
-                // std::cout << "bcs 1 left " << bc[0][1] << " " << rhouFwd << " " << rhouBwd << std::endl; 
-                // std::cout << "bcs 2 left " << bc[0][2] << " " << EFwd << " " << EBwd << std::endl; 
-
                 uLBwd[0] =  rhoBwd;
                 uLBwd[1] =  rhouBwd;
                 uLBwd[2] =  EBwd;
                 
-                uRFwd[0] = Umap_v[elid][0][1];
-                uRFwd[1] = Umap_v[elid][1][1];
-                uRFwd[2] = Umap_v[elid][2][1];
+                uRFwd[0] = traces[elid][0][1];
+                uRFwd[1] = traces[elid][1][1];
+                uRFwd[2] = traces[elid][2][1];
 
-                uRBwd[0] = Umap_v[elid+1][0][0];  
-                uRBwd[1] = Umap_v[elid+1][1][0];  
-                uRBwd[2] = Umap_v[elid+1][2][0];  
-
+                uRBwd[0] = traces[elid+1][0][0];  
+                uRBwd[1] = traces[elid+1][1][0];  
+                uRBwd[2] = traces[elid+1][2][0];  
             }
             else if(elid == Nel-1)
             {
-                uLFwd[0] = Umap_v[elid][0][0];
-                uLFwd[1] = Umap_v[elid][1][0];
-                uLFwd[2] = Umap_v[elid][2][0];
+                uLFwd[0] = traces[elid][0][0];
+                uLFwd[1] = traces[elid][1][0];
+                uLFwd[2] = traces[elid][2][0];
 
-                uLBwd[0] = Umap_v[elid-1][0][1];
-                uLBwd[1] = Umap_v[elid-1][1][1];
-                uLBwd[2] = Umap_v[elid-1][2][1];
+                uLBwd[0] = traces[elid-1][0][1];
+                uLBwd[1] = traces[elid-1][1][1];
+                uLBwd[2] = traces[elid-1][2][1];
 
-                uRFwd[0] = Umap_v[elid][0][1];
-                uRFwd[1] = Umap_v[elid][1][1];
-                uRFwd[2] = Umap_v[elid][2][1];
+                uRFwd[0] = traces[elid][0][1];
+                uRFwd[1] = traces[elid][1][1];
+                uRFwd[2] = traces[elid][2][1];
 
                 //uRBwd[n] = Umap_v[0][n][0];
                 // uRBwd[n] = 2.0*bc[1][n]-uRFwd[n];
@@ -1389,21 +1033,21 @@ void CalculateRHSWeakFREuler(int t, Basis* bkey, int np, int nq, int Nel, int P,
             }
             else
             {
-                uLFwd[0] = Umap_v[elid][0][0];
-                uLFwd[1] = Umap_v[elid][1][0];
-                uLFwd[2] = Umap_v[elid][2][0];
+                uLFwd[0] = traces[elid][0][0];
+                uLFwd[1] = traces[elid][1][0];
+                uLFwd[2] = traces[elid][2][0];
                 
-                uLBwd[0] = Umap_v[elid-1][0][1];
-                uLBwd[1] = Umap_v[elid-1][1][1];
-                uLBwd[2] = Umap_v[elid-1][2][1];
+                uLBwd[0] = traces[elid-1][0][1];
+                uLBwd[1] = traces[elid-1][1][1];
+                uLBwd[2] = traces[elid-1][2][1];
 
-                uRFwd[0] = Umap_v[elid][0][1];
-                uRFwd[1] = Umap_v[elid][1][1];
-                uRFwd[2] = Umap_v[elid][2][1];
+                uRFwd[0] = traces[elid][0][1];
+                uRFwd[1] = traces[elid][1][1];
+                uRFwd[2] = traces[elid][2][1];
                 
-                uRBwd[0] = Umap_v[elid+1][0][0];
-                uRBwd[1] = Umap_v[elid+1][1][0];
-                uRBwd[2] = Umap_v[elid+1][2][0];
+                uRBwd[0] = traces[elid+1][0][0];
+                uRBwd[1] = traces[elid+1][1][0];
+                uRBwd[2] = traces[elid+1][2][0];
             }
        // }
 
@@ -1482,9 +1126,12 @@ void CalculateRHSWeakFREuler(int t, Basis* bkey, int np, int nq, int Nel, int P,
         // {
         //     std::cout << "NaN input right2" << std::endl;
         // }
-        
-        // std::vector<double> Fl = LaxFriedrichsRiemannVec(t, uLBwd,uLFwd,1.0,elid);
-        // std::vector<double> Fr = LaxFriedrichsRiemannVec(t, uRFwd,uRBwd,1.0,elid);
+
+        // std::cout << elid << " uLBwd " << uLBwd[0] << " " << uLBwd[1] << " " << uLBwd[2] << std::endl;
+        // std::cout << elid << " uLFwd " << uLFwd[0] << " " << uLFwd[1] << " " << uLFwd[2] << std::endl;
+
+        std::vector<double> Fl = LaxFriedrichsRiemannVec(t, uLBwd,uLFwd,1.0,elid);
+        std::vector<double> Fr = LaxFriedrichsRiemannVec(t, uRFwd,uRBwd,1.0,elid);
 
         // if(std::isnan(Fl[0]) || std::isnan(Fr[0]))
         // {
@@ -1500,8 +1147,8 @@ void CalculateRHSWeakFREuler(int t, Basis* bkey, int np, int nq, int Nel, int P,
         //     std::cout << "NaN input Fl2" << std::endl;
         // }
 
-        std::vector<double> Fl = RoeRiemannVec(uLBwd,uLFwd,1.0);
-        std::vector<double> Fr = RoeRiemannVec(uRFwd,uRBwd,1.0);
+        // std::vector<double> Fl = RoeRiemannVec(uLBwd,uLFwd,1.0);
+        // std::vector<double> Fr = RoeRiemannVec(uRFwd,uRBwd,1.0);
 
         std::vector<double> Fleft(nvar,0.0);
         std::vector<double> Fright(nvar,0.0);
@@ -1517,7 +1164,7 @@ void CalculateRHSWeakFREuler(int t, Basis* bkey, int np, int nq, int Nel, int P,
 
             
             
-            // std::cout << Fleft[n] << " " << Fright[n] << std::endl;
+            // std::cout << "Fleft Fright " << Fleft[n] << " " << Fright[n] << std::endl;
 
             // Fleft[n]  = ((FLFwd[n]+FLBwd[n])*0.5);
             // Fright[n] = ((FRFwd[n]+FRBwd[n])*0.5);
@@ -1540,105 +1187,132 @@ void CalculateRHSWeakFREuler(int t, Basis* bkey, int np, int nq, int Nel, int P,
     std::vector<double> numcoeff_eq2(Mdim,0.0);
 
     /*
-    if(bkey->GetBtype().compare("Modal") == 0)
+    if(bkey->GetBtype().compare("Modal") == 0 || bkey->GetBtype().compare("Nodal") == 0)
     {
         for(int i = 0;i < Nel;i++)
         {
             
             if(i == 0)
             {   
-                numcoeff_eq0[0]                 =       -Fmap_v[i][0][0];
-                numcoeff_eq0[P]               =        Fmap_v[i][1][0];
+                numcoeff_eq0[0]                 =       -Fmap_v[i][0][0]*Bmat[0][0];
+                numcoeff_eq0[P]                 =        Fmap_v[i][1][0]*Bmat[P][nq-1];
 
-                numcoeff_eq1[0]                 =       -Fmap_v[i][0][1];
-                numcoeff_eq1[P]               =        Fmap_v[i][1][1];
+                numcoeff_eq1[0]                 =       -Fmap_v[i][0][1]*Bmat[0][0];
+                numcoeff_eq1[P]                 =        Fmap_v[i][1][1]*Bmat[P][nq-1];
 
-                numcoeff_eq2[0]                 =       -Fmap_v[i][0][2];
-                numcoeff_eq2[P]               =        Fmap_v[i][1][2];
+                numcoeff_eq2[0]                 =       -Fmap_v[i][0][2]*Bmat[0][0];
+                numcoeff_eq2[P]                 =        Fmap_v[i][1][2]*Bmat[P][nq-1];
             }
             else if(i == Nel-1)
             {
 
-                numcoeff_eq0[(Nel-1)*(P+1)]     =       -Fmap_v[i][0][0];
-                numcoeff_eq0[Nel*(P+1)-1  ]     =        Fmap_v[i][1][0];
+                numcoeff_eq0[(Nel-1)*(P+1)]     =       -Fmap_v[i][0][0]*Bmat[0][0];
+                numcoeff_eq0[Nel*(P+1)-1  ]     =        Fmap_v[i][1][0]*Bmat[P][nq-1];
 
-                numcoeff_eq1[(Nel-1)*(P+1)]     =       -Fmap_v[i][0][1];
-                numcoeff_eq1[Nel*(P+1)-1  ]     =        Fmap_v[i][1][1];
+                numcoeff_eq1[(Nel-1)*(P+1)]     =       -Fmap_v[i][0][1]*Bmat[0][0];
+                numcoeff_eq1[Nel*(P+1)-1  ]     =        Fmap_v[i][1][1]*Bmat[P][nq-1];
 
-                numcoeff_eq2[(Nel-1)*(P+1)]     =       -Fmap_v[i][0][2];
-                numcoeff_eq2[Nel*(P+1)-1  ]     =        Fmap_v[i][1][2];
+                numcoeff_eq2[(Nel-1)*(P+1)]     =       -Fmap_v[i][0][2]*Bmat[0][0];
+                numcoeff_eq2[Nel*(P+1)-1  ]     =        Fmap_v[i][1][2]*Bmat[P][nq-1];
 
 
             }
             else
             {
 
-                numcoeff_eq0[i*(P+1)]           =       -Fmap_v[i][0][0];
-                numcoeff_eq0[i*(P+1)+P]       =       Fmap_v[i][1][0];
+                numcoeff_eq0[i*(P+1)]           =       -Fmap_v[i][0][0]*Bmat[0][0];;
+                numcoeff_eq0[i*(P+1)+P]         =       Fmap_v[i][1][0]*Bmat[P][nq-1];
 
-                numcoeff_eq1[i*(P+1)]           =       -Fmap_v[i][0][1];
-                numcoeff_eq1[i*(P+1)+P]       =       Fmap_v[i][1][1];
+                numcoeff_eq1[i*(P+1)]           =       -Fmap_v[i][0][1]*Bmat[0][0];;
+                numcoeff_eq1[i*(P+1)+P]         =       Fmap_v[i][1][1]*Bmat[P][nq-1];
 
-                numcoeff_eq2[i*(P+1)]           =       -Fmap_v[i][0][2];
-                numcoeff_eq2[i*(P+1)+P]       =       Fmap_v[i][1][2];
+                numcoeff_eq2[i*(P+1)]           =       -Fmap_v[i][0][2]*Bmat[0][0];;
+                numcoeff_eq2[i*(P+1)+P]         =       Fmap_v[i][1][2]*Bmat[P][nq-1];
 
             }        
         }
     }
-
     */
-    // if(bkey->GetBtype().compare("Nodal") == 0)
-    // {
-    for(int i = 0;i < Nel;i++)
+
+    std::vector<double> zn = bkey->GetZn();
+
+    if(bkey->GetBtype().compare("Nodal") == 0 || bkey->GetBtype().compare("Modal") == 0)
     {
-        double l0  = 0.0;
-        double r0  = 0.0;
-
-        double l1  = 0.0;
-        double r1  = 0.0;
-
-        double l2  = 0.0;
-        double r2  = 0.0;   
-
-        double J = Jac[i];
-
-        std::vector<double> ones(P+1,1.0);
-        
-        // double value_left   = EvaluateFromNodalBasis(P, -1, ones, zquad, ptype);
-        // double value_right  = EvaluateFromNodalBasis(P,  1, ones, zquad, ptype);
-        // std::cout << "vl vr " <<value_left << " " << value_right << std::endl;
-        // l0  = -Fmap_v[i][0][0]*value_left;//*Bmat[y][0]+l0;
-        // r0  =  Fmap_v[i][1][0]*value_right;//*Bmat[y][nq-1]+r0;
-
-        // l1  = -Fmap_v[i][0][1]*value_left;//*Bmat[y][0]+l1;
-        // r1  =  Fmap_v[i][1][1]*value_right;//*Bmat[y][nq-1]+r1;
-
-        // l2  = -Fmap_v[i][0][2]*value_left;//*Bmat[y][0]+l2;
-        // r2  =  Fmap_v[i][1][2]*value_right;//*Bmat[y][nq-1]+r2;
-
-        // std::vector<double> F0_l(P+1,0.0);
-        for(int u=0;u<(P+1);u++)
+        // if(bkey->GetBtype().compare("Nodal") == 0)
+        // {
+        for(int i = 0;i < Nel;i++)
         {
-            // F0_l[u] = Fmap_v[u][0][0]*Bmat[u][0];
-            // F0_r[u] = Fmap_v[u][1][0]*Bmat[u][nq-1];
-            numcoeff_eq0[i*(P+1)+u] = (Fmap_v[i][1][0]*Bmat[u][nq-1]-Fmap_v[i][0][0]*Bmat[u][0]);
-            // F1_l[u] = Fmap_v[u][0][1]*Bmat[u][0];
-            // F1_r[u] = Fmap_v[u][1][1]*Bmat[u][nq-1];
-            numcoeff_eq1[i*(P+1)+u] = (Fmap_v[i][1][1]*Bmat[u][nq-1]-Fmap_v[i][0][1]*Bmat[u][0]);
-            // // F2_l[u] = Fmap_v[u][0][2]*Bmat[u][0];
-            // // F2_r[u] = Fmap_v[u][1][2]*Bmat[u][nq-1];
-            numcoeff_eq2[i*(P+1)+u] = (Fmap_v[i][1][2]*Bmat[u][nq-1]-Fmap_v[i][0][2]*Bmat[u][0]);
+            double l0  = 0.0;
+            double r0  = 0.0;
+
+            double l1  = 0.0;
+            double r1  = 0.0;
+
+            double l2  = 0.0;
+            double r2  = 0.0;   
+
+            double J = Jac[i];
+
+            std::vector<double> ones(P+1,1.0);
+            
+            // std::cout << "vl vr " <<value_left << " " << value_right << std::endl;
+            // l0  = -Fmap_v[i][0][0]*value_left;//*Bmat[y][0]+l0;
+            // r0  =  Fmap_v[i][1][0]*value_right;//*Bmat[y][nq-1]+r0;
+
+            // l1  = -Fmap_v[i][0][1]*value_left;//*Bmat[y][0]+l1;
+            // r1  =  Fmap_v[i][1][1]*value_right;//*Bmat[y][nq-1]+r1;
+
+            // l2  = -Fmap_v[i][0][2]*value_left;//*Bmat[y][0]+l2;
+            // r2  =  Fmap_v[i][1][2]*value_right;//*Bmat[y][nq-1]+r2;
+
+            // std::vector<double> F0_l(P+1,0.0);
+            double value_left = 0.0;
+            double value_right = 0.0;
+            
+            
+            for(int u=0;u<(P+1);u++)
+            {
+                if(btype == "Modal")
+                {
+                    value_left   = GetModalBasisValue(P, -1.0, u, zquad.size(), "GaussLegendre");
+                    value_right  = GetModalBasisValue(P,  1.0, u, zquad.size(), "GaussLegendre");
+                }
+
+                if(btype == "Nodal")
+                {
+                    value_left   = GetNodalBasisValue(P, -1.0, u, zn, "GaussLegendre");
+                    value_right  = GetNodalBasisValue(P,  1.0,  u, zn, "GaussLegendre");
+                }
+                // F0_l[u] = Fmap_v[u][0][0]*Bmat[u][0];
+                // F0_r[u] = Fmap_v[u][1][0]*Bmat[u][nq-1];
+                //std::cout << value_left << " " << value_right << " " << Bmat[u][0] << " " << Bmat[u][nq-1] << " " << btype << std::endl;
+                //numcoeff_eq0[i*(P+1)+u] = (Fmap_v[i][1][0]*Bmat[u][nq-1]-Fmap_v[i][0][0]*Bmat[u][0]);
+                numcoeff_eq0[i*(P+1)+u] = (Fmap_v[i][1][0]*value_right-Fmap_v[i][0][0]*value_left);
+                // std::cout <<  Bmat[u][nq-1] << " " << Bmat[u][0] << std::endl;
+                // F1_l[u] = Fmap_v[u][0][1]*Bmat[u][0];
+                // F1_r[u] = Fmap_v[u][1][1]*Bmat[u][nq-1];
+                //numcoeff_eq1[i*(P+1)+u] = (Fmap_v[i][1][1]*Bmat[u][nq-1]-Fmap_v[i][0][1]*Bmat[u][0]);
+                numcoeff_eq1[i*(P+1)+u] = (Fmap_v[i][1][1]*value_right-Fmap_v[i][0][1]*value_left);
+                // // F2_l[u] = Fmap_v[u][0][2]*Bmat[u][0];
+                // // F2_r[u] = Fmap_v[u][1][2]*Bmat[u][nq-1];
+                //numcoeff_eq2[i*(P+1)+u] = (Fmap_v[i][1][2]*Bmat[u][nq-1]-Fmap_v[i][0][2]*Bmat[u][0]);
+                numcoeff_eq2[i*(P+1)+u] = (Fmap_v[i][1][2]*value_right-Fmap_v[i][0][2]*value_left);
+                
+            }
+            // std::cout << std::endl;
+            // std::cout << std::endl;
+            // for(int u=0;u<(P+1);u++)
+            // {
+            //     numcoeff_eq0[i*(P+1)+u]           =      F0_r[u]-F0_l[u];
+
+            //     numcoeff_eq1[0+u]                 =      F1_r[u]-F0_l[u];
+
+            //     numcoeff_eq2[0+u]                 =      F2_r[u]-F2_l[u];
+            // }      
         }
 
-        // for(int u=0;u<(P+1);u++)
-        // {
-        //     numcoeff_eq0[i*(P+1)+u]           =      F0_r[u]-F0_l[u];
-
-        //     numcoeff_eq1[0+u]                 =      F1_r[u]-F0_l[u];
-
-        //     numcoeff_eq2[0+u]                 =      F2_r[u]-F2_l[u];
-        // }      
     }
+    
     // }
     
     double **StiffnessMatGlobal     = dmatrix(Mdim);
@@ -2335,14 +2009,30 @@ std::vector<double> LaxFriedrichsRiemannVec(int t, std::vector<double> Ul, std::
     double HRoe  = (srL * HL + srR * HR) / srLR;
     double URoe2 = uRoe * uRoe;
     double cRoe = sqrt((1.4 - 1.0) * (HRoe - 0.5 * URoe2));
+    // double cRoe = (aL+aR)*0.5;
+    // std::cout << "fabs(uRoe)+cRoe " << fabs(uRoe)+cRoe << std::endl;
     for(int n=0;n<nvar;n++)
     { 
         double Fl = Flvec[n];
         double Fr = Frvec[n];
 
-        double URoe     = fabs(uRoe)+cRoe;
+        // double alphaL   = fabs(Ul[n])+aL;
+        // double alphaR   = fabs(Ur[n])+aR;
 
-        Fn[n] = 0.5*((Fl+Fr)*normal)-0.5*URoe*(Ur[n]-Ul[n]);
+        double alphaL   = fabs(uRoe)+cRoe;
+        double alphaR   = fabs(uRoe)+cRoe;
+        // if((eln == 9 && t == 1) )
+        // {
+        //     std::cout << "cRoe NAN " << srLR <<  " " << uRoe << " cRoe " << cRoe << " " << aL << " " << aR << " " << HRoe << " " <<URoe2 << " " << (1.4 - 1.0) * (HRoe - 0.5 * URoe2) << std::endl;
+        //     std::cout << "pressure " << pL << " " << rhoL << " " << pR << " " << rhoR <<std::endl;
+        //     std::cout << "Energy " << EL << " " << ER   << std::endl;
+        //     std::cout << "ELEMENT " << eln << std::endl;
+        //     std::cout << "t " << t << std::endl;
+        // }
+        
+        // Fn[n] = 0.5*((Fl+Fr)*normal-(fabs(uRoe)+cRoe)*(Ur[n]-Ul[n]));
+        Fn[n] = 0.5*((Fl+Fr)*normal)-0.5*max(fabs(alphaL),fabs(alphaR))*(Ur[n]-Ul[n]);
+        //Fn[n] = 0.5*((Fl+Fr)*normal-alphaR*(Ur[n]-Ul[n]));
     }
 
 
