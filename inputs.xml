@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <DGSOLVER>
     <PARAMETERS>
-        <P> PolynomialOrder = 3.0 </P>
-	<P> nQuadrature = 24.0 </P>
-        <P> nElements = 60 </P>
+        <P> PolynomialOrder = 2.0 </P>
+	<P> nQuadrature = 18.0 </P>
+        <P> nElements = 100 </P>
         <P> dt = 0.0001 </P>
         <P> nt = 2000 </P>
-        <P> BasisType = Nodal </P>
+        <P> BasisType = Modal </P>
         <P> PointsType = GaussLegendre </P>
         <P> TimeScheme = RK4 </P>
         <P> Restart = 0 </P>

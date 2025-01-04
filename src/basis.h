@@ -28,6 +28,31 @@ class Basis {
             std::vector<double> GetWn();
             std::string GetBtype();
 
+            double GetNodalBasisValue(int P, 
+                              double xref,
+                              int i,
+                              std::vector<double> zquad,
+                              std::string ptype);
+
+            double  GetModalBasisValue(int P, 
+                              double zref, 
+                              int n,
+                              int nq, 
+                              std::string ptype);
+            
+            std::vector<double> GetBasisLeftValues();
+            std::vector<double> GetBasisRightValues();
+
+            std::vector<double> BackwardTransformValModal(int P, 
+                                      double xq, 
+                                      std::vector<double> input_coeff,
+                                      std::string ptype);
+
+            std::vector<double> BackwardTransformValNodal(int P, 
+                                      double xq, 
+                                      std::vector<double> input_coeff,
+                                      std::string ptype);
+
     private:
         std::vector<std::vector<double> > m_bdata_out;
         std::vector<std::vector<double> > m_dbdata_out;
@@ -37,6 +62,9 @@ class Basis {
 
         std::vector<double> zn;
         std::vector<double> wn;
+
+        std::vector<double> bl;
+        std::vector<double> br;
 
         std::string ptype;
         std::string btype;

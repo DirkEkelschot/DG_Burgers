@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <float.h>
 #include <math.h>
-#include "polylib.h"
+#include "Polylib.h"
 #include <float.h>
 #define STOP  30 
 #define EPS   100*DBL_EPSILON
@@ -184,7 +184,7 @@ static double gammaF (double);
 */
 
 void zwgj (double *z, double *w, int np, double alpha, double beta){
-  register int i;
+  int i;
   double fac, one = 1.0, two = 2.0, apb = alpha + beta;
 
   jacobz (np,z,alpha,beta);
@@ -216,7 +216,7 @@ void zwgrjm(double *z, double *w, int np, double alpha, double beta){
     w[0] = 2.0;
   }
   else{
-    register int i;
+    int i;
     double fac, one = 1.0, two = 2.0, apb = alpha + beta;
     
     z[0] = -one;
@@ -252,7 +252,7 @@ void zwgrjp(double *z, double *w, int np, double alpha, double beta){
     w[0] = 2.0;
   }
   else{
-    register int i;
+    int i;
     double fac, one = 1.0, two = 2.0, apb = alpha + beta;
     
     jacobz  (np-1,z,alpha+1,beta);
@@ -286,7 +286,7 @@ void zwglj(double *z, double *w, int np, double alpha, double beta){
     w[0] = 2.0;
   }
   else{
-    register int i;
+    int i;
     double   fac, one = 1.0, apb = alpha + beta, two = 2.0;
   
     z[0]    = -one;
@@ -326,7 +326,7 @@ void Dgj(double *D, double *Dt, double *z, int np,double alpha, double beta){
     D[0] = Dt[0] = 0.0;
   }
   else{
-    register int i,j; 
+    int i,j; 
     double *pd;
     
     pd = (double *)malloc(np*sizeof(double));
@@ -369,7 +369,7 @@ void Dgrjm(double *D, double *Dt, double *z, int np,
     D[0] = Dt[0] = 0.0;
   }
   else{
-    register int i, j; 
+    int i, j; 
     double   one = 1.0, two = 2.0;
     double   *pd;
 
@@ -421,7 +421,7 @@ void Dgrjp(double *D, double *Dt, double *z, int np,
     D[0] = Dt[0] = 0.0;
   }
   else{
-    register int i, j; 
+    int i, j; 
     double   one = 1.0, two = 2.0;
     double   *pd;
 
@@ -473,7 +473,7 @@ void Dglj(double *D, double *Dt, double *z, int np,
     D[0] = Dt[0] = 0.0;
   }
   else{
-    register int i, j; 
+    int i, j; 
     double   one = 1.0, two = 2.0;
     double   *pd;
 
@@ -684,7 +684,7 @@ double hglj (int i, double z, double *zglj, int np, double alpha, double beta)
 void Imgj(double *im,double *zgj, double *zm, int nz, int mz,
 	  double alpha, double beta){
   double zp;
-  register int i, j;
+  int i, j;
 
   for (i = 0; i < mz; ++i) {
     zp = zm[i];
@@ -711,7 +711,7 @@ void Imgj(double *im,double *zgj, double *zm, int nz, int mz,
 void Imgrjm(double *im,double *zgrj, double *zm, int nz, int mz,
 	   double alpha, double beta){
   double zp;
-  register int i, j;
+  int i, j;
 
   for (i = 0; i < mz; i++) {
     zp = zm[i];
@@ -738,7 +738,7 @@ void Imgrjm(double *im,double *zgrj, double *zm, int nz, int mz,
 void Imgrjp(double *im,double *zgrj, double *zm, int nz, int mz,
 	   double alpha, double beta){
   double zp;
-  register int i, j;
+  int i, j;
 
   for (i = 0; i < mz; i++) {
     zp = zm[i];
@@ -767,7 +767,7 @@ void Imglj(double *im, double *zglj, double *zm, int nz, int mz,
 	   double alpha, double beta)
 {
   double zp;
-  register int i, j;
+  int i, j;
   
   for (i = 0; i < mz; i++) {
     zp = zm[i];
@@ -820,7 +820,7 @@ void Imglj(double *im, double *zglj, double *zm, int nz, int mz,
 */
 void jacobfd(int np, double *z, double *poly_in, double *polyd, int n, 
 	     double alpha, double beta){
-  register int i;
+  int i;
   double  zero = 0.0, one = 1.0, two = 2.0;
 
   if(!np)
@@ -843,7 +843,7 @@ void jacobfd(int np, double *z, double *poly_in, double *polyd, int n,
 	polyd[i] = 0.5*(alpha + beta + two);
   }
   else{
-    register int k;
+    int k;
     double   a1,a2,a3,a4;
     double   two = 2.0, apb = alpha + beta;
     double   *poly, *polyn1,*polyn2;
@@ -920,7 +920,7 @@ void jacobfd(int np, double *z, double *poly_in, double *polyd, int n,
 
 void jacobd(int np, double *z, double *polyd, int n, double alpha, double beta)
 {
-  register int i;
+  int i;
   double one = 1.0;
   if(n == 0)
     for(i = 0; i < np; ++i) polyd[i] = 0.0;
@@ -982,7 +982,7 @@ static double gammaF(double x){
 */
 
 static void Jacobz(int n, double *z, double alpha, double beta){
-  register int i,j,k;
+  int i,j,k;
   double   dth = M_PI/(2.0*(double)n);
   double   poly,pder,rlast=0.0;
   double   sum,delr,r;

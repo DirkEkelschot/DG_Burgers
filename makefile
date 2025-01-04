@@ -8,13 +8,13 @@ TESTBIN = tests/bin
 TEST1 = tests/test1
 TEST2 = tests/test2
 TEST3 = tests/test3
-CXXFLAGS += -std=c++17 -g -DMPI_NO_CPPBIND
+CXXFLAGS += -g -DMPI_NO_CPPBIND
 include module.mk
 
 all:		install
 	
 install:	makebin
-		$(CC) $(CXXFLAGS) $(OBJ) $(MAIN_OBJ) -o $(BIN)/$(EXEC) $(LDFLAGS) $(LDLIBS)
+		$(CC) $(CXXFLAGS) -std=c++17 $(OBJ) $(MAIN_OBJ) -o $(BIN)/$(EXEC) $(LDFLAGS) $(LDLIBS)
 		cp -r $(BIN)/$(EXEC) .
 
 makebin:

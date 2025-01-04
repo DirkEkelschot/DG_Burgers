@@ -60,78 +60,17 @@ Basis::Basis(std::string pt,
 
     std::vector<double> DinNew(nq*nq);
 
-    // std::cout << "komtie hoor " << std::endl;
     for(int i=0;i<nq;i++)
     {
         for(int j=0;j<nq;j++)
         {
              DinNew[i*nq+j] = D[i][j];
-            //  std::cout <<  D[i][j] << " ";
         }
-        // std::cout << std::endl;
+       
     }
 
-
-
-    if(btype == "Modal2")
-    {
-        for (int i = 0; i < numPoints; ++i)
-        {
-            m_bdata[i]             = 0.5 * (1 - z[i]);
-            m_bdata[numPoints + i] = 0.5 * (1 + z[i]);
-        }
-
-        std::vector<double> diff_mode0(nq);
-        for(int i=0;i<nq;i++)
-        {
-            diff_mode0[i] = 0;
-
-            for(int j=0;j<nq;j++)
-            {
-                diff_mode0[i] = diff_mode0[i] + D[i][j]*m_bdata[j];
-                m_dbdata[i]   = diff_mode0[i];
-            }
-        }
-
-        std::vector<double> diff_mode1(nq);
-        for(int i=0;i<nq;i++)
-        {
-            diff_mode1[i] = 0;
-
-            for(int j=0;j<nq;j++)
-            {
-                diff_mode1[i] = diff_mode1[i] + D[i][j]*m_bdata[numPoints+j];
-                m_dbdata[numPoints + i] = diff_mode1[i];
-            }
-        }
-
-        mode = m_bdata.data() + 2 * numPoints;
-
-        for (int p = 2; p < numModes; ++p, mode += numPoints)
-        {
-            polylib::jacobfd(numPoints, z.data(), mode, NULL, p - 2, 1.0,
-                                1.0);
-
-            for (int i = 0; i < numPoints; ++i)
-            {
-                mode[i] *= m_bdata[i] * m_bdata[numPoints + i];
-            }
-
-            std::vector<double> diff_mode(nq);
-
-            for(int i=0;i<nq;i++)
-            {
-                diff_mode[i] = 0;
-
-                for(int j=0;j<nq;j++)
-                {
-                    diff_mode[i] = diff_mode[i] + D[i][j]*m_bdata[p*numPoints+j];
-                    m_dbdata[p*numPoints+i] = diff_mode[i];
-                }
-            }
-        }
-
-    }
+    bl.resize(numModes,0.0);
+    br.resize(numModes,0.0);
 
     if(btype == "Modal")
     {
@@ -184,6 +123,12 @@ Basis::Basis(std::string pt,
             }
         }
 
+        for(int p = 0; p < numModes; p++)
+        {
+            bl[p]   = GetModalBasisValue(P,  -1.0, p, z.size(), ptype);
+            br[p]   = GetModalBasisValue(P,   1.0, p, z.size(), ptype);
+        }
+        
         
         // define derivative basis
         // cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
@@ -220,8 +165,15 @@ Basis::Basis(std::string pt,
                     diff_mode[i] = diff_mode[i]/1.0;
                     m_dbdata[p*nq+i] = diff_mode[i]/1.0;
                 }
+
                 // m_dbdata[p] = diff_mode;
+                bl[p]   = GetNodalBasisValue(P, -1.0, p, zn, ptype);
+                br[p]   = GetNodalBasisValue(P,  1.0, p, zn, ptype);
+                
             }
+
+
+
         }
         if(ptype.compare("GaussLegendre") == 0)
         {
@@ -246,8 +198,13 @@ Basis::Basis(std::string pt,
                     m_dbdata[p*nq+i] = diff_mode[i]/1.0;
                 }
                 // m_dbdata[p] = diff_mode;
+
+                bl[p]   = GetNodalBasisValue(P, -1.0, p, zn, ptype);
+                br[p]   = GetNodalBasisValue(P,  1.0, p, zn, ptype);
             }
         }
+
+
 
         // define derivative basis
         // diff( O*nq, Dplot, basis_plot[i].data(), basis_plot_diff.data(), 1.0);
@@ -280,7 +237,140 @@ Basis::Basis(std::string pt,
         m_bdata_out.push_back(basis_row);
         m_dbdata_out.push_back(diff_basis_row);
     }
+}
 
+
+double Basis::GetNodalBasisValue(int P, 
+                              double xref,
+                              int i,
+                              std::vector<double> zquad,
+                              std::string ptype)
+{
+
+    double res = 0.0;
+    int numModes = P + 1;
+    
+    // phi1[q] = hglj(n, zquad_eval[q], zquad.data(), numModes, 0.0, 0.0);
+
+    if(ptype == "GaussLegendre")
+    {
+        // res = hgj(i, zquad.data(), xref, numModes, 0.0, 0.0);
+        res = polylib::hgj(i, xref, zquad.data(), numModes, 0.0, 0.0);
+    }
+    if(ptype == "GaussLegendreLobatto")
+    {
+        // res = hglj(i, zquad.data(), xref, numModes, 0.0, 0.0);
+        res = polylib::hglj(i, xref, zquad.data(), numModes, 0.0, 0.0);
+    }
+
+
+    return res;
+}
+
+double Basis::GetModalBasisValue(int P, 
+                              double zref, 
+                              int n,
+                              int nq, 
+                              std::string ptype)
+{
+
+    double res = 0.0;
+    int numModes = P + 1;
+
+    std::vector<std::vector<double> > basis;
+    std::vector<double> zref_tmp(1,0.0);
+    zref_tmp[0] = zref;
+
+    std::vector<double> phi1(1,0.0);
+
+    if(n == 0)
+    {
+        phi1[0] = (1 - zref)/2;
+    }
+    else if(n == P)
+    {
+        
+        phi1[0] = (1 + zref)/2;
+        
+    }
+    else
+    {
+        polylib::jacobfd(1, zref_tmp.data(), phi1.data(), NULL, n-1, 1.0, 1.0);
+
+        phi1[0] = ((1-zref)/2)*((1+zref)/2)*phi1[0];
+    }
+    
+    res = phi1[0];
+    // }
+    return res;
+}
+
+
+
+
+std::vector<double> Basis::BackwardTransformValNodal(int P, 
+                                      double xq, 
+                                      std::vector<double> input_coeff,
+                                      std::string ptype)
+{
+    int numModes = P + 1;
+
+    std::vector<double> quad(1,0.0);
+    double sum = 0.0;
+    for(int i = 0;i<P+1;i++)
+    {
+        double phi1 = polylib::hgj(i, xq, zn.data(), numModes, 0.0, 0.0);
+
+        quad[0] = quad[0]+input_coeff[i]*phi1;
+        
+    }
+
+    return quad;
+}
+
+
+
+
+std::vector<double> Basis::BackwardTransformValModal(int P, 
+                                      double xq, 
+                                      std::vector<double> input_coeff,
+                                      std::string ptype)
+{
+    std::vector<double> quad(1,0.0);
+    int numModes = P + 1;
+    for (int n = 0; n < numModes; ++n)
+    {
+        std::vector<double> phi1(1,0.0);
+        std::vector<double> xqtmp(1,0.0);
+        xqtmp[0] = xq;
+        if(n == 0)
+        {
+            phi1[0] = (1 - xq)/2;
+        }
+        else if(n == P)
+        {
+            phi1[0] = (1 + xq)/2;
+        }
+        else
+        {
+            polylib::jacobfd(1, xqtmp.data(), phi1.data(), NULL, n-1, 1.0, 1.0);
+            phi1[0] = ((1-xq)/2)*((1+xq)/2)*phi1[0];
+        }
+        quad[0] = quad[0]+input_coeff[n]*phi1[0];
+    }
+
+    return quad;
+}
+
+
+std::vector<double> Basis::GetBasisLeftValues()
+{
+    return bl;
+}
+
+std::vector<double> Basis::GetBasisRightValues()
+{
+    return br;
 }
 
 std::vector<std::vector<double> > Basis::GetB()

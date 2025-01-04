@@ -22,7 +22,7 @@ void *diff(int np, double **D, double *p, double *pd, double J)
 // This member function perform numerical quadrature.
 double integr(int np, double *w, double *phi1, double *phi2)
 {
-  register double sum = 0.;
+  double sum = 0.;
 
   for(int i=0;i<np;i++){
     sum = sum + w[i]*phi1[i]*phi2[i]; 
