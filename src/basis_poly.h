@@ -18,7 +18,7 @@ using namespace std;
 class BasisPoly {
 public:
     virtual ~BasisPoly() = default;
-    virtual std::vector<double> ConstructBasis(){
+    virtual void ConstructBasis(){
     // Default implementation or throw an error
     throw std::runtime_error("ConstructBasis not implemented in base class");
 };
@@ -53,7 +53,7 @@ class NodalBasis : public BasisPoly {
 public:
     NodalBasis(int P, std::string pt, std::vector<double>& z, std::vector<double>& w) : BasisPoly(P, pt, z, w) {}
     
-    std::vector<double> ConstructBasis() override;
+    void ConstructBasis() override;
     // std::vector<double> EvaluatePoints() override;
 };
 
@@ -61,18 +61,14 @@ class ModalBasis : public BasisPoly {
 public:
     ModalBasis(int P, std::string pt, std::vector<double>& z, std::vector<double>& w) : BasisPoly(P, pt, z, w) {}
 
-    std::vector<double> ConstructBasis() override;
+    void ConstructBasis() override;
     // std::vector<double> EvaluatePoints() override;
 };
 
 
 
 
-std::unique_ptr<BasisPoly> Create(const std::string& bt, int P, std::string pt, std::vector<double>& z, std::vector<double>& w) {
-    if (bt == "Nodal") return std::make_unique<NodalBasis>(P, pt, z, w);
-    if (bt == "Modal") return std::make_unique<ModalBasis>(P, pt, z, w);
-    throw std::invalid_argument("Unknown basis type");
-}
+
 
 
 

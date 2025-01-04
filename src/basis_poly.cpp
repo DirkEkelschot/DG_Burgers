@@ -29,8 +29,13 @@
 //     throw std::invalid_argument("Unknown basis type");
 // }
 
+std::unique_ptr<BasisPoly> BasisPoly::Create(const std::string& bt, int P, std::string pt, std::vector<double>& z, std::vector<double>& w) {
+    if (bt == "Nodal") return std::make_unique<NodalBasis>(P, pt, z, w);
+    if (bt == "Modal") return std::make_unique<ModalBasis>(P, pt, z, w);
+    throw std::invalid_argument("Unknown basis type");
+}
 
-std::vector<double> NodalBasis::ConstructBasis()  
+void NodalBasis::ConstructBasis()  
 {
     double *mode;
 
@@ -49,24 +54,32 @@ std::vector<double> NodalBasis::ConstructBasis()
     D[0]        = (double *)malloc(nq*nq*sizeof(double));
     Dt[0]       = (double *)malloc(nq*nq*sizeof(double));
 
+    for(int i=1;i<nq;i++){
+        D[i]  = D[i-1]+nq;
+        Dt[i] = Dt[i-1]+nq;
+    }
+
     if(m_pt.compare("GaussLegendreLobatto") == 0)
     {
         polylib::zwgll(m_z.data(), m_w.data(), nq);
         polylib::zwgll(m_zn.data(), m_wn.data(), np);
-        // polylib::Dgll(D, Dt, m_z.data(), nq);
+        polylib::Dgll(D, Dt, m_z.data(), nq);
     }
     if(m_pt.compare("GaussLegendre") == 0)
     {
         polylib::zwgl(m_z.data(), m_w.data(), nq);
         polylib::zwgl(m_zn.data(), m_wn.data(), np);
-        // polylib::Dgl(D, Dt, m_z.data(), nq);
+        polylib::Dgl(D, Dt, m_z.data(), nq);
     }
 
     m_bdata.resize(numModes*nq);
     m_dbdata.resize(numModes*nq);
 
-    mode = m_bdata.data();
 
+    std::cout << "Nodal :: ConstructBasis() " << m_zn.size() << std::endl;
+    
+    mode = m_bdata.data();
+    
     if(m_pt.compare("GaussLegendreLobatto") == 0)
     {
         for (int p = 0; p < numModes; ++p, mode += numPoints)
@@ -95,10 +108,8 @@ std::vector<double> NodalBasis::ConstructBasis()
             // m_br[p]   = GetNodalBasisValue(m_P,  1.0, p, m_zn, m_pt);
             
         }
-
-
-
     }
+    
     if(m_pt.compare("GaussLegendre") == 0)
     {
         for (int p = 0; p < numModes; ++p, mode += numPoints)
@@ -121,13 +132,16 @@ std::vector<double> NodalBasis::ConstructBasis()
                 diff_mode[i] = diff_mode[i]/1.0;
                 m_dbdata[p*nq+i] = diff_mode[i]/1.0;
             }
+
             // m_dbdata[p] = diff_mode;
 
             // m_bl[p]   = GetNodalBasisValue(m_P, -1.0, p, m_zn, m_pt);
             // m_br[p]   = GetNodalBasisValue(m_P,  1.0, p, m_zn, m_pt);
         }
     }
+    
     // Implementation using m_data
+
 }
 
 // // GLLBasis implementation
@@ -135,7 +149,7 @@ std::vector<double> NodalBasis::ConstructBasis()
 //     // Initialize GLLData
 // }
 
-std::vector<double> ModalBasis::ConstructBasis()  
+void ModalBasis::ConstructBasis()  
 {
     
     double *mode;
@@ -149,6 +163,11 @@ std::vector<double> ModalBasis::ConstructBasis()
     D[0]        = (double *)malloc(nq*nq*sizeof(double));
     Dt[0]       = (double *)malloc(nq*nq*sizeof(double));
 
+    for(int i=1;i<nq;i++){
+        D[i]  = D[i-1]+nq;
+        Dt[i] = Dt[i-1]+nq;
+    }
+
     m_zn.resize(np);
     m_wn.resize(np);
     m_bl.resize(numModes);
@@ -156,6 +175,8 @@ std::vector<double> ModalBasis::ConstructBasis()
     
     m_bdata.resize(numModes*nq);
     m_dbdata.resize(numModes*nq);
+
+    std::cout << "Modal :: ConstructBasis() " << m_zn.size() << std::endl;
 
     if(m_pt.compare("GaussLegendreLobatto") == 0)
     {

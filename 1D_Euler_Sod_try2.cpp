@@ -12,6 +12,7 @@
 #include <map>
 #include "src/tinyxml.h"
 #include <sstream>
+#include "src/basis_poly.h"
 
 using namespace std;
 using namespace polylib;
@@ -248,7 +249,10 @@ int main(int argc, char* argv[])
                                  zq,wq,P,nq);
 
     run_new_basis_test(zq,wq,nq,P);
-
+    // run_new_basis_poly_test(zq,wq,nq,P);
+    // BasisPoly* bNodalkey = new BasisPoly(P, inputs->ptype, zq, wq);
+    std::unique_ptr<BasisPoly> nodalBasis = BasisPoly::Create(inputs->btype, P, inputs->ptype, zq, wq);
+    nodalBasis->ConstructBasis();
     //=====================================================================
 
     
