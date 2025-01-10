@@ -6,7 +6,7 @@
         <P> nElements = 50 </P>
         <P> dt = 0.0001 </P>
         <P> nt = 2000 </P>
-        <P> BasisType = Nodal </P>
+        <P> BasisType = Modal </P>
         <P> PointsType = GaussLegendre </P>
         <P> TimeScheme = RK4 </P>
         <P> Restart = 0 </P>

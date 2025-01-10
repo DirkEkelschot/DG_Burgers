@@ -237,13 +237,13 @@ void ModalBasis::ConstructBasis()
     {
         polylib::zwgll(m_z.data(), m_w.data(), nq);
         polylib::zwgll(m_zn.data(), m_wn.data(), np);
-        // polylib::Dgll(D, Dt, z.data(), nq);
+        polylib::Dgll(D, Dt, m_z.data(), nq);
     }
     if(m_pt.compare("GaussLegendre") == 0)
     {
         polylib::zwgl(m_z.data(), m_w.data(), nq);
         polylib::zwgl(m_zn.data(), m_wn.data(), np);
-        // polylib::Dgl(D, Dt, z.data(), nq);
+        polylib::Dgl(D, Dt, m_z.data(), nq);
     }
     for (int n = 0; n < numModes; ++n)
     {

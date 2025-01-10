@@ -341,14 +341,6 @@ std::vector<std::vector<double> > getModalBasisEval(std::vector<double> zquad_ev
 
 
 
-
-
-
-
-
-
-
-
 std::vector<double> GetElementMassMatrix(int P, 
                             std::vector<std::vector<double> > basis,
                             std::vector<double> wquad,

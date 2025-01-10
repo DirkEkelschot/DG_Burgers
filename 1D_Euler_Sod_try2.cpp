@@ -248,6 +248,9 @@ int main(int argc, char* argv[])
                                  inputs->btype,
                                  zq,wq,P,nq);
 
+    std::vector<std::vector<double> > bmat_old = bkey->GetD();
+
+
     run_new_basis_test(zq,wq,nq,P);
     // run_new_basis_poly_test(zq,wq,nq,P);
     // BasisPoly* bNodalkey = new BasisPoly(P, inputs->ptype, zq, wq);
@@ -257,13 +260,22 @@ int main(int argc, char* argv[])
     std::unique_ptr<BasisPoly> modalBasis = BasisPoly::Create("Modal", P, inputs->ptype, zq, wq);
     modalBasis->ConstructBasis();
     std::vector<std::vector<double> > mblr = modalBasis->GetLeftRightBasisValues();
-
     std::unique_ptr<BasisPoly> readBasis = BasisPoly::Create(inputs->btype, P, inputs->ptype, zq, wq);
     readBasis->ConstructBasis();
-    for(int i=0;i<nblr.size();i++)
-    {
-        std::cout << "(" << nblr[i][0] << ", " << nblr[i][1] << ")          (" << mblr[i][0] << " " << mblr[i][1] << ")" << std::endl;
-    }
+    std::vector<std::vector<double> > bmat_new = readBasis->GetD();
+    // for(int i=0;i<P+1;i++)
+    // {
+    //     for(int j=0;j<nq;j++)
+    //     {
+    //         std::cout << "(" << bmat_old[i][j] << " " << bmat_new[i][j] << ") ";
+    //     }
+    //     std::cout << std::endl;
+    // }
+
+    // for(int i=0;i<nblr.size();i++)
+    // {
+    //     std::cout << "(" << nblr[i][0] << ", " << nblr[i][1] << ")          (" << mblr[i][0] << " " << mblr[i][1] << ")" << std::endl;
+    // }
     //=====================================================================
 
     
@@ -1030,13 +1042,10 @@ void CalculateRHSWeakDGEuler(int t, BasisPoly* bkeynew, Basis* bkey, int np, int
     // GetGlobalStiffnessMatrixWeakNew(Nel, P, wquad, D, Jac, map, Mdim, basis_update, StiffnessMatGlobal);
     GetGlobalStiffnessMatrixWeakNewBasis(Bmat, Dmat, Nel, P, wquad, D, Jac, map, Mdim, Bmat, StiffnessMatGlobal);
    
-
     double *tmp0                     = dvector(Mdim);
     double *tmp1                     = dvector(Mdim);
     double *tmp2                     = dvector(Mdim);
 
-
-   
     dgemv_(&TRANS,&Mdim,&Mdim,&ONE_DOUBLE,StiffnessMatGlobal[0],&Mdim,F_DG_coeff[0].data(),&ONE_INT,&ZERO_DOUBLE,tmp0,&ONE_INT);
     dgemv_(&TRANS,&Mdim,&Mdim,&ONE_DOUBLE,StiffnessMatGlobal[0],&Mdim,F_DG_coeff[1].data(),&ONE_INT,&ZERO_DOUBLE,tmp1,&ONE_INT);
     dgemv_(&TRANS,&Mdim,&Mdim,&ONE_DOUBLE,StiffnessMatGlobal[0],&Mdim,F_DG_coeff[2].data(),&ONE_INT,&ZERO_DOUBLE,tmp2,&ONE_INT);
@@ -1051,15 +1060,13 @@ void CalculateRHSWeakDGEuler(int t, BasisPoly* bkeynew, Basis* bkey, int np, int
         Ucoeff_eq1[i] = tmp1[i]-numcoeff_eq1[i];
         Ucoeff_eq2[i] = tmp2[i]-numcoeff_eq2[i];
     }
+
     double **MassMatGlobal0          = dmatrix(Mdim);
     GetGlobalMassMatrixNew(Nel, P, wquad, Jac, map, Mdim, Bmat, MassMatGlobal0);
-
     // GetGlobalMassMatrixNewBasis(Nel, P, wquad, Jac, map, Mdim, bkey, MassMatGlobal0);
-
     double **MassMatGlobal1          = dmatrix(Mdim);
     GetGlobalMassMatrixNew(Nel, P, wquad, Jac, map, Mdim, Bmat, MassMatGlobal1);
     // GetGlobalMassMatrixNewBasis(Nel, P, wquad, Jac, map, Mdim, bkey, MassMatGlobal0);
-
     double **MassMatGlobal2          = dmatrix(Mdim);
     GetGlobalMassMatrixNew(Nel, P, wquad, Jac, map, Mdim, Bmat, MassMatGlobal2);
     // GetGlobalMassMatrixNewBasis(Nel, P, wquad, Jac, map, Mdim, bkey, MassMatGlobal0);
