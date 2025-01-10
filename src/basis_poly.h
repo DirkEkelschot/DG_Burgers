@@ -18,11 +18,22 @@ using namespace std;
 class BasisPoly {
 public:
     virtual ~BasisPoly() = default;
-    virtual void ConstructBasis(){
-    // Default implementation or throw an error
-    throw std::runtime_error("ConstructBasis not implemented in base class");
-};
+    virtual void ConstructBasis()
+    {
+        // Default implementation or throw an error
+        throw std::runtime_error("ConstructBasis not implemented in base class");
+    };
     
+    std::vector<std::vector<double> > GetLeftRightBasisValues();
+
+    std::vector<std::vector<double> > GetB();
+
+    std::vector<std::vector<double> > GetD();
+
+    std::vector<double> GetZn();
+
+    std::vector<double> GetLeftRightSolution(std::vector<double> coeff);
+
     // virtual std::vector<double> EvaluatePoints();
 
     static std::unique_ptr<BasisPoly> Create(const std::string& bt, int P, std::string pt, std::vector<double>& z, std::vector<double>& w);
@@ -39,10 +50,16 @@ protected:
      // additional data
     std::vector<double> m_zn;
     std::vector<double> m_wn;
+
     std::vector<double> m_bl;
     std::vector<double> m_br;
+    std::vector<std::vector<double> > m_blr;
+
     std::vector<double> m_bdata;
     std::vector<double> m_dbdata;
+
+    std::vector<std::vector<double> > m_bdata_out;
+    std::vector<std::vector<double> > m_dbdata_out;
 
 };
 
@@ -61,7 +78,7 @@ class ModalBasis : public BasisPoly {
 public:
     ModalBasis(int P, std::string pt, std::vector<double>& z, std::vector<double>& w) : BasisPoly(P, pt, z, w) {}
 
-    void ConstructBasis() override;
+    void ConstructBasis() override; 
     // std::vector<double> EvaluatePoints() override;
 };
 

@@ -24,7 +24,7 @@ void CalculateRHS(int np, int nq, int Nel, int P, std::vector<double> zquad, std
 void CalculateRHSWeakFR(int np, int nq, int Nel, int P, std::vector<double> zquad, std::vector<double> wquad, std::vector<double> z, double **D, double *Jac, int **map, double *bc, double *X_DG, double *U_DG, double *R_DG, double dt, std::vector<std::vector<double> > basis, std::vector<std::vector<double> > basisRadauM, std::vector<std::vector<double> > basisRadauP);
 void CalculateRHSStrongFR(int np, int nq, int Nel, int P, std::vector<double> zquad, std::vector<double> wquad, std::vector<double> z, double **D, double *Jac, int **map, double *bc, double *X_DG, double *U_DG, double *R_DG, double dt, std::vector<std::vector<double> > basis, std::vector<std::vector<double> > basisRadauM, std::vector<std::vector<double> > basisRadauP);
 void CalculateRHSStrongDGEuler(int t, Basis* bkey, int np, int nq, int Nel, int P, std::vector<double> zquad, std::vector<double> wquad, std::vector<double> z, double **D, double *Jac, int **map, std::vector<std::vector<double> > bc, std::vector<double> X_DG, std::vector<std::vector<double> > U_DG, std::vector<std::vector<double> > &R_DG, double dt, std::vector<std::vector<double> > basis);
-void CalculateRHSWeakDGEuler(int t, Basis* bkey, int np, int nq, int Nel, int P, std::vector<double> zquad, std::vector<double> wquad, std::vector<double> z, std::string btype, std::string ptype, double **D, double *Jac, int **map, std::vector<std::vector<double> > bc, std::vector<double> X_DG, std::vector<std::vector<double> > U_DG, std::vector<std::vector<double> > &R_DG, double dt, std::vector<std::vector<double> > basis);
+void CalculateRHSWeakDGEuler(int t, BasisPoly* bkeynew, Basis* bkey, int np, int nq, int Nel, int P, std::vector<double> zquad, std::vector<double> wquad, std::vector<double> z, std::string btype, std::string ptype, double **D, double *Jac, int **map, std::vector<std::vector<double> > bc, std::vector<double> X_DG, std::vector<std::vector<double> > U_DG, std::vector<std::vector<double> > &R_DG, double dt, std::vector<std::vector<double> > basis);
 
 void *negatednormals(int Nel, double *n);
 int **iarray(int n,int m);
@@ -66,8 +66,8 @@ void GetElementStiffnessMatrixNew(int P, std::vector<double> wquad, double **D, 
 void GetGlobalStiffnessMatrixNew(int Nel, int P, std::vector<double> wquad, double **D, double *Jac, int **map, int Mdim, std::vector<std::vector<double> > basis, double **StiffnessGlobal);
 void GetElementStiffnessMatrixWeakNew(int P, std::vector<double> wquad, double **D, double J, std::vector<std::vector<double> > basis, double **StiffMatElem);
 void GetGlobalStiffnessMatrix(int Nel, int P, int np, int nq, std::vector<double> zquad, std::vector<double> wquad, std::vector<double> z, double **D, double *Jac, int **map, int Mdim, double **StiffnessGlobal);
-void GetElementStiffnessMatrixWeakNewBasis(int P, std::vector<double> wquad, double **D, double J, Basis* bkey, double **StiffMatElem);
-void GetGlobalStiffnessMatrixWeakNewBasis(Basis* bkey, int Nel, int P, std::vector<double> wquad, double **D, double *Jac, int **map, int Mdim, std::vector<std::vector<double> > basis, double **StiffnessGlobal);
+void GetElementStiffnessMatrixWeakNewBasis(int P, std::vector<double> wquad, double **D, double J, std::vector<std::vector<double> > Bmat, std::vector<std::vector<double> > Dmat, double **StiffMatElem);
+void GetGlobalStiffnessMatrixWeakNewBasis(std::vector<std::vector<double> > Bmat, std::vector<std::vector<double> > Dmat, int Nel, int P, std::vector<double> wquad, double **D, double *Jac, int **map, int Mdim, std::vector<std::vector<double> > basis, double **StiffnessGlobal);
 
 void GetElementStiffnessMatrixNewBasis(int P, std::vector<double> wquad, double **D, double J, Basis* bkey, double **StiffMatElem);
 void GetGlobalStiffnessMatrixNewBasis(int Nel, int P, std::vector<double> wquad, double **D, double *Jac, int **map, int Mdim, Basis* bkey, double **StiffnessGlobal);
@@ -251,8 +251,19 @@ int main(int argc, char* argv[])
     run_new_basis_test(zq,wq,nq,P);
     // run_new_basis_poly_test(zq,wq,nq,P);
     // BasisPoly* bNodalkey = new BasisPoly(P, inputs->ptype, zq, wq);
-    std::unique_ptr<BasisPoly> nodalBasis = BasisPoly::Create(inputs->btype, P, inputs->ptype, zq, wq);
+    std::unique_ptr<BasisPoly> nodalBasis = BasisPoly::Create("Nodal", P, inputs->ptype, zq, wq);
     nodalBasis->ConstructBasis();
+    std::vector<std::vector<double> > nblr = nodalBasis->GetLeftRightBasisValues();
+    std::unique_ptr<BasisPoly> modalBasis = BasisPoly::Create("Modal", P, inputs->ptype, zq, wq);
+    modalBasis->ConstructBasis();
+    std::vector<std::vector<double> > mblr = modalBasis->GetLeftRightBasisValues();
+
+    std::unique_ptr<BasisPoly> readBasis = BasisPoly::Create(inputs->btype, P, inputs->ptype, zq, wq);
+    readBasis->ConstructBasis();
+    for(int i=0;i<nblr.size();i++)
+    {
+        std::cout << "(" << nblr[i][0] << ", " << nblr[i][1] << ")          (" << mblr[i][0] << " " << mblr[i][1] << ")" << std::endl;
+    }
     //=====================================================================
 
     
@@ -499,7 +510,7 @@ int main(int argc, char* argv[])
         if(timeScheme==0)
         {
             //CalculateRHSStrongDGEuler(bModalkey, np, nq, Nel, P, zq, wq, zq, D, Jac, map, bc_e, X_DG_e, U_DG, R_DG0, dt, basis_m);
-            CalculateRHSWeakDGEuler(t, bkey, np, nq, Nel, P, zq, wq, zq, inputs->btype, inputs->ptype, D, Jac, map, bc_e, X_DG_e, U_DG, R_DG0, dt, basis_m);
+            CalculateRHSWeakDGEuler(t, readBasis.get(), bkey, np, nq, Nel, P, zq, wq, zq, inputs->btype, inputs->ptype, D, Jac, map, bc_e, X_DG_e, U_DG, R_DG0, dt, basis_m);
 
             for(int i=0;i<(Nel*nq);i++)
             {
@@ -525,7 +536,7 @@ int main(int argc, char* argv[])
         if(timeScheme==1)
         {
             //CalculateRHSStrongDGEuler(np, nq, Nel, P, zq, wq, zq, D, Jac, map, bc_e, X_DG_e, U_DG, R_DG0, dt, basis_m);
-            CalculateRHSWeakDGEuler(t, bkey, np, nq, Nel, P, zq, wq, zq, inputs->btype, inputs->ptype, D, Jac, map, bc_e, X_DG_e, U_DG, R_DG0, dt, basis_m);
+            CalculateRHSWeakDGEuler(t,readBasis.get(), bkey, np, nq, Nel, P, zq, wq, zq, inputs->btype, inputs->ptype, D, Jac, map, bc_e, X_DG_e, U_DG, R_DG0, dt, basis_m);
             for(int i=0;i<(Nel*nq);i++)
             {
                 // std::cout << "R_DG0[0][i] " << R_DG0[0][i] << " " << R_DG0[1][i] << " " << R_DG0[2][i] << std::endl; 
@@ -546,7 +557,7 @@ int main(int argc, char* argv[])
             }
 
             //CalculateRHSStrongDGEuler(np, nq, Nel, P, zq, wq, zq, D, Jac, map, bc_e, X_DG_e, k1_input, R_DG1, dt, basis_m);
-            CalculateRHSWeakDGEuler(t, bkey, np, nq, Nel, P, zq, wq, zq, inputs->btype, inputs->ptype, D, Jac, map, bc_e, X_DG_e, k1_input, R_DG1, dt, basis_m);
+            CalculateRHSWeakDGEuler(t, readBasis.get(), bkey, np, nq, Nel, P, zq, wq, zq, inputs->btype, inputs->ptype, D, Jac, map, bc_e, X_DG_e, k1_input, R_DG1, dt, basis_m);
             for(int i=0;i<(Nel*nq);i++)
             {
                 // std::cout << "R_DG0[0][i] " << R_DG0[0][i] << " " << R_DG0[1][i] << " " << R_DG0[2][i] << std::endl; 
@@ -567,7 +578,7 @@ int main(int argc, char* argv[])
             }
 
             //CalculateRHSStrongDGEuler(np, nq, Nel, P, zq, wq, zq, D, Jac, map, bc_e, X_DG_e, k2_input, R_DG2, dt, basis_m);
-            CalculateRHSWeakDGEuler(t, bkey, np, nq, Nel, P, zq, wq, zq, inputs->btype, inputs->ptype, D, Jac, map, bc_e, X_DG_e, k2_input, R_DG2, dt, basis_m);
+            CalculateRHSWeakDGEuler(t, readBasis.get(), bkey, np, nq, Nel, P, zq, wq, zq, inputs->btype, inputs->ptype, D, Jac, map, bc_e, X_DG_e, k2_input, R_DG2, dt, basis_m);
 
             for(int i=0;i<(Nel*nq);i++)
             {
@@ -589,7 +600,7 @@ int main(int argc, char* argv[])
             }
 
             //CalculateRHSStrongDGEuler(np, nq, Nel, P, zq, wq, zq, D, Jac, map, bc_e, X_DG_e, k3_input, R_DG3, dt, basis_m);
-            CalculateRHSWeakDGEuler(t, bkey, np, nq, Nel, P, zq, wq, zq, inputs->btype, inputs->ptype, D, Jac, map, bc_e, X_DG_e, k3_input, R_DG3, dt, basis_m);
+            CalculateRHSWeakDGEuler(t, readBasis.get(), bkey, np, nq, Nel, P, zq, wq, zq, inputs->btype, inputs->ptype, D, Jac, map, bc_e, X_DG_e, k3_input, R_DG3, dt, basis_m);
 
 
             for(int i=0;i<(Nel*nq);i++)
@@ -716,7 +727,7 @@ double LaxFriedrichsRiemann(double Ul, double Ur, double n)
 
 
 
-void CalculateRHSWeakDGEuler(int t, Basis* bkey, int np, int nq, int Nel, int P, std::vector<double> zquad, std::vector<double> wquad, std::vector<double> z, std::string btype, std::string ptype, double **D, double *Jac, int **map, std::vector<std::vector<double> > bc, std::vector<double> X_DG, std::vector<std::vector<double> > U_DG, std::vector<std::vector<double> > &R_DG, double dt, std::vector<std::vector<double> > basis)
+void CalculateRHSWeakDGEuler(int t, BasisPoly* bkeynew, Basis* bkey, int np, int nq, int Nel, int P, std::vector<double> zquad, std::vector<double> wquad, std::vector<double> z, std::string btype, std::string ptype, double **D, double *Jac, int **map, std::vector<std::vector<double> > bc, std::vector<double> X_DG, std::vector<std::vector<double> > U_DG, std::vector<std::vector<double> > &R_DG, double dt, std::vector<std::vector<double> > basis)
 {
     unsigned char TRANS = 'T';
     int NRHS=1,INFO,*ipiv,ONE_INT=1;
@@ -734,8 +745,8 @@ void CalculateRHSWeakDGEuler(int t, Basis* bkey, int np, int nq, int Nel, int P,
     std::vector<double> F_DG_row2(Nel*nq,0.0);
 
 
-    std::vector<std::vector<double> > Bmat = bkey->GetB();
-
+    std::vector<std::vector<double> > Bmat = bkeynew->GetB();
+    std::vector<std::vector<double> > Dmat = bkeynew->GetD();
 
     double gammaMone = 1.4-1.0;
     for(int eln=0;eln<Nel;eln++)
@@ -808,58 +819,10 @@ void CalculateRHSWeakDGEuler(int t, Basis* bkey, int np, int nq, int Nel, int P,
         std::vector<double> coeff_eq2_trace = ForwardTransform(P, Bmat, wquad, nq, J, quad_eq2_trace);
 
         std::vector<std::vector<double> > trace(3);
-
-        if(btype == "Nodal")
-        {
-            std::vector<double> zn = bkey->GetZn();
         
-            std::vector<double> lrho = bkey->BackwardTransformValNodal(P, -1.0, coeff_eq0_trace, ptype);
-            std::vector<double> rrho = bkey->BackwardTransformValNodal(P, 1.0, coeff_eq0_trace, ptype);
-
-            std::vector<double> lrhou = bkey->BackwardTransformValNodal(P, -1.0, coeff_eq1_trace, ptype);
-            std::vector<double> rrhou = bkey->BackwardTransformValNodal(P, 1.0, coeff_eq1_trace, ptype);
-
-            std::vector<double> lrhoE = bkey->BackwardTransformValNodal(P, -1.0, coeff_eq2_trace, ptype);
-            std::vector<double> rrhoE = bkey->BackwardTransformValNodal(P, 1.0, coeff_eq2_trace, ptype);
-
-            std::vector<double> row0(2,0);
-            row0[0] = lrho[0];
-            row0[1] = rrho[0];
-            trace[0] = row0;
-            std::vector<double> row1(2,0);
-            row1[0] = lrhou[0];
-            row1[1] = rrhou[0];
-            trace[1] = row1;
-            std::vector<double> row2(2,0);
-            row2[0] = lrhoE[0];
-            row2[1] = rrhoE[0];
-            trace[2] = row2;
-        }
-
-        if(btype == "Modal")
-        {
-            std::vector<double> lrho = bkey->BackwardTransformValModal(P, -1.0, coeff_eq0_trace, ptype);
-            std::vector<double> rrho = bkey->BackwardTransformValModal(P, 1.0,  coeff_eq0_trace, ptype);
-
-            std::vector<double> lrhou = bkey->BackwardTransformValModal(P, -1.0, coeff_eq1_trace, ptype);
-            std::vector<double> rrhou = bkey->BackwardTransformValModal(P, 1.0, coeff_eq1_trace, ptype);
-
-            std::vector<double> lrhoE = bkey->BackwardTransformValModal(P, -1.0, coeff_eq2_trace, ptype);
-            std::vector<double> rrhoE = bkey->BackwardTransformValModal(P, 1.0, coeff_eq2_trace, ptype);
-   
-            std::vector<double> row0(2,0);
-            row0[0] = lrho[0];
-            row0[1] = rrho[0];
-            trace[0] = row0;
-            std::vector<double> row1(2,0);
-            row1[0] = lrhou[0];
-            row1[1] = rrhou[0];
-            trace[1] = row1;
-            std::vector<double> row2(2,0);
-            row2[0] = lrhoE[0];
-            row2[1] = rrhoE[0];
-            trace[2] = row2;
-        }
+        trace[0] =  bkeynew->GetLeftRightSolution(coeff_eq0_trace);
+        trace[1] =  bkeynew->GetLeftRightSolution(coeff_eq1_trace);
+        trace[2] =  bkeynew->GetLeftRightSolution(coeff_eq2_trace);
         
         for(int i = 0;i < (P+1);i++)
         {
@@ -1065,97 +1028,15 @@ void CalculateRHSWeakDGEuler(int t, Basis* bkey, int np, int nq, int Nel, int P,
     double **StiffnessMatGlobal     = dmatrix(Mdim);
     // GetGlobalStiffnessMatrixNew(Nel, P, wquad, D, Jac, map, Mdim, basis, StiffnessMatGlobal);
     // GetGlobalStiffnessMatrixWeakNew(Nel, P, wquad, D, Jac, map, Mdim, basis_update, StiffnessMatGlobal);
-    GetGlobalStiffnessMatrixWeakNewBasis(bkey, Nel, P, wquad, D, Jac, map, Mdim, Bmat, StiffnessMatGlobal);
-    // std::cout << "begin wquad" << std::endl;
-    // for(int i=0;i<nq;i++)
-    // {
-    //     std::cout << wquad[i] << std::endl;
-    // }
-    // std::cout << "end wquad" << std::endl;
-    // std::cout << "Stiffness_Matrix = [";
-    // for(int s=0;s<Mdim;s++)
-    // {
-    //     std::cout << "[";
-    //     for(int r=0;r<Mdim;r++)
-    //     {
-    //         if(r<(Mdim-1))
-    //         {
-    //             std::cout << StiffnessMatGlobal[s][r] << ", ";
-    //         }
-    //         else
-    //         {
-    //             std::cout << StiffnessMatGlobal[s][r];
-    //         }   
-    //     }
-    //     if(s<(Mdim-1))
-    //     {
-    //         std::cout << "],"<< std::endl;
-    //     }
-    //     else
-    //     {
-    //         std::cout << "]]"<< std::endl;
-    //     }
-    // }
-    // std::cout << "END Stiffness Matrix " << std::endl;
-
-
-    // std::cout << "Basis_Matrix = [";
-    // for(int s=0;s<(P+1);s++)
-    // {
-    //     std::cout << "[";
-    //     for(int r=0;r<nq;r++)
-    //     {
-    //         if(r<(nq-1))
-    //         {
-    //             std::cout << Bmat[s][r] << ", ";
-    //         }
-    //         else
-    //         {
-    //             std::cout << Bmat[s][r];
-    //         }   
-    //     }
-    //     if(s<((P+1)-1))
-    //     {
-    //         std::cout << "],"<< std::endl;
-    //     }
-    //     else
-    //     {
-    //         std::cout << "]]"<< std::endl;
-    //     }
-    // }
-    // std::cout << "END Basis Matrix " << std::endl;
+    GetGlobalStiffnessMatrixWeakNewBasis(Bmat, Dmat, Nel, P, wquad, D, Jac, map, Mdim, Bmat, StiffnessMatGlobal);
+   
 
     double *tmp0                     = dvector(Mdim);
     double *tmp1                     = dvector(Mdim);
     double *tmp2                     = dvector(Mdim);
 
 
-    // // ================== ===============DEBUG
-    // for(int eln=0;eln<Nel;eln++)
-    // {
-    //     std::vector<double> Fcoeff_eq0_tmp(P+1,0.0);
-    //     std::vector<double> Fcoeff_eq1_tmp(P+1,0.0);
-    //     std::vector<double> Fcoeff_eq2_tmp(P+1,0.0);
-
-    //     for(int i = 0;i < (P+1);i++)
-    //     {
-    //         Fcoeff_eq0_tmp[i] = Fcoeff_eq0[i+eln*(P+1)];
-    //         Fcoeff_eq1_tmp[i] = Fcoeff_eq1[i+eln*(P+1)];
-    //         Fcoeff_eq2_tmp[i] = Fcoeff_eq2[i+eln*(P+1)];
-    //     }
-
-    //     std::vector<double> Fquad_e0 = BackwardTransform(P,  nq,  Bmat,  Fcoeff_eq0_tmp);
-    //     std::vector<double> Fquad_e1 = BackwardTransform(P,  nq,  Bmat,  Fcoeff_eq1_tmp);
-    //     std::vector<double> Fquad_e2 = BackwardTransform(P,  nq,  Bmat,  Fcoeff_eq2_tmp);
-
-    //     // for(int n=0;n<nq;n++)
-    //     // {
-    //     //     std::cout << "Fquad " << Fquad_e0[n] << " " << Fquad_e1[n] << " " << Fquad_e2[n] << std::endl;
-    //     // }
-    // }
-    // // ================== ===============DEBUG
-
-
+   
     dgemv_(&TRANS,&Mdim,&Mdim,&ONE_DOUBLE,StiffnessMatGlobal[0],&Mdim,F_DG_coeff[0].data(),&ONE_INT,&ZERO_DOUBLE,tmp0,&ONE_INT);
     dgemv_(&TRANS,&Mdim,&Mdim,&ONE_DOUBLE,StiffnessMatGlobal[0],&Mdim,F_DG_coeff[1].data(),&ONE_INT,&ZERO_DOUBLE,tmp1,&ONE_INT);
     dgemv_(&TRANS,&Mdim,&Mdim,&ONE_DOUBLE,StiffnessMatGlobal[0],&Mdim,F_DG_coeff[2].data(),&ONE_INT,&ZERO_DOUBLE,tmp2,&ONE_INT);
@@ -1169,21 +1050,6 @@ void CalculateRHSWeakDGEuler(int t, Basis* bkey, int np, int nq, int Nel, int P,
         Ucoeff_eq0[i] = tmp0[i]-numcoeff_eq0[i];
         Ucoeff_eq1[i] = tmp1[i]-numcoeff_eq1[i];
         Ucoeff_eq2[i] = tmp2[i]-numcoeff_eq2[i];
-
-        // Ucoeff_eq0[i] = tmp0[i];
-        // Ucoeff_eq1[i] = tmp1[i];
-        // Ucoeff_eq2[i] = tmp2[i];
-        // std::cout << tmp0[i] << " " << tmp1[i] << " " << tmp2[i] << " " << numcoeff_eq0[i] << " " << numcoeff_eq1[i] << " " << numcoeff_eq2[i]  << std::endl;
-        //std::cout << "Ucoeff " << Ucoeff_eq0[i] << " " << Ucoeff_eq1[i] << " " << Ucoeff_eq2[i] << " " << tmp0[i] << " " << tmp1[i] << " " << tmp2[i] << std::endl;
-
-        // if(std::isnan(Ucoeff_eq0[i]) || std::isnan(Ucoeff_eq1[i]) || std::isnan(Ucoeff_eq2[i]))
-        // {
-        //     std::cout << "NaN Inside Ucoeff_eq2 " << " " << i << " " << Mdim << " :: "<< Ucoeff_eq0[i] << " " << Ucoeff_eq1[i] << " " << Ucoeff_eq2[i] << std::endl;
-        //     std::cout << "numcoeff  " << numcoeff_eq0[i] << " " << numcoeff_eq1[i] << " " << numcoeff_eq2[i] << std::endl;
-        //     std::cout << "tmp0  " << tmp0[i] << " " << tmp1[i] << " " << tmp2[i] << std::endl;
-        // }
-
-        //std::cout << tmp0[i] << " " << tmp1[i] << " " << tmp2[i] << std::endl;
     }
     double **MassMatGlobal0          = dmatrix(Mdim);
     GetGlobalMassMatrixNew(Nel, P, wquad, Jac, map, Mdim, Bmat, MassMatGlobal0);
@@ -1197,34 +1063,6 @@ void CalculateRHSWeakDGEuler(int t, Basis* bkey, int np, int nq, int Nel, int P,
     double **MassMatGlobal2          = dmatrix(Mdim);
     GetGlobalMassMatrixNew(Nel, P, wquad, Jac, map, Mdim, Bmat, MassMatGlobal2);
     // GetGlobalMassMatrixNewBasis(Nel, P, wquad, Jac, map, Mdim, bkey, MassMatGlobal0);
-
-
-    // std::cout << "Mass_Matrix = [";
-    // for(int s=0;s<Mdim;s++)
-    // {
-    //     std::cout << "[";
-    //     for(int r=0;r<Mdim;r++)
-    //     {
-    //         if(r<(Mdim-1))
-    //         {
-    //             std::cout << MassMatGlobal0[s][r] << ", ";
-    //         }
-    //         else
-    //         {
-    //             std::cout << MassMatGlobal0[s][r];
-    //         }   
-    //     }
-    //     if(s<(Mdim-1))
-    //     {
-    //         std::cout << "],"<< std::endl;
-    //     }
-    //     else
-    //     {
-    //         std::cout << "]]"<< std::endl;
-    //     }
-    // }
-    // std::cout << "END Mass Matrix " << std::endl;
-
 
     dgetrf_(&Mdim, &Mdim, MassMatGlobal0[0], &Mdim, ipiv, &INFO);
     dgetrf_(&Mdim, &Mdim, MassMatGlobal1[0], &Mdim, ipiv, &INFO);
@@ -1260,21 +1098,11 @@ void CalculateRHSWeakDGEuler(int t, Basis* bkey, int np, int nq, int Nel, int P,
         std::vector<double> quad_e2 = BackwardTransform(P,  nq,  Bmat,  coeff_eq2_tmp);
         int Pf = P - 1;
 
-        // quad_e0[0]           =    quad_e0[0]-Fmap_v[eln][0][0];
-        // quad_e0[nq-1]        =    quad_e0[nq-1]+Fmap_v[eln][1][0];
-
-        // quad_e1[0]           =    quad_e1[0]-Fmap_v[eln][0][1];
-        // quad_e1[nq-1]        =    quad_e1[nq-1]+Fmap_v[eln][1][1];
-
-        // quad_e2[0]           =    quad_e2[0]-Fmap_v[eln][0][2];
-        // quad_e2[nq-1]        =    quad_e2[nq-1]+Fmap_v[eln][1][2];
-
         for(int i = 0;i < nq;i++)
         {
             R_DG_row0[i+nq*eln] = quad_e0[i];
             R_DG_row1[i+nq*eln] = quad_e1[i];
             R_DG_row2[i+nq*eln] = quad_e2[i];
-            //std::cout << "quad_" << quad_e0[i] << " " << quad_e1[i] << " " << quad_e2[i] << std::endl;
         }
 
 
@@ -2152,7 +1980,7 @@ void GetGlobalStiffnessMatrixWeakNew(int Nel, int P, std::vector<double> wquad, 
 
 
 
-void GetGlobalStiffnessMatrixWeakNewBasis(Basis* bkey, int Nel, int P, std::vector<double> wquad, double **D, double *Jac, int **map, int Mdim, std::vector<std::vector<double> > basis, double **StiffnessGlobal)
+void GetGlobalStiffnessMatrixWeakNewBasis(std::vector<std::vector<double> > Bmat, std::vector<std::vector<double> > Dmat, int Nel, int P, std::vector<double> wquad, double **D, double *Jac, int **map, int Mdim, std::vector<std::vector<double> > basis, double **StiffnessGlobal)
 {
     double **StiffnessElem = dmatrix(P+1);
     // Construct global Mass matrix.
@@ -2166,7 +1994,7 @@ void GetGlobalStiffnessMatrixWeakNewBasis(Basis* bkey, int Nel, int P, std::vect
     for(int eln=0;eln<Nel;eln++)
     {
         // Determine elemental mass matrix;
-        GetElementStiffnessMatrixWeakNewBasis(P, wquad, D, Jac[eln], bkey, StiffnessElem);
+        GetElementStiffnessMatrixWeakNewBasis(P, wquad, D, Jac[eln], Bmat, Dmat, StiffnessElem);
 
 
         for(int a=0;a<P+1;a++)
@@ -2419,7 +2247,9 @@ void GetElementStiffnessMatrixWeakNew(int P, std::vector<double> wquad, double *
 void GetElementStiffnessMatrixWeakNewBasis(int P, 
                                             std::vector<double> wquad, 
                                             double **D, double J, 
-                                            Basis* bkey, double **StiffMatElem)
+                                            std::vector<std::vector<double> > Bmat, 
+                                            std::vector<std::vector<double> > Dmat, 
+                                            double **StiffMatElem)
 {
     for(int i=0;i<P+1;i++)
     {
@@ -2428,15 +2258,15 @@ void GetElementStiffnessMatrixWeakNewBasis(int P,
         }
     }
 
-    std::vector<std::vector<double> > basis_update        = bkey->GetB();
-    std::vector<std::vector<double> > basis_diff_update   = bkey->GetD();
+    // std::vector<std::vector<double> > basis_update        = bkey->GetB();
+    // std::vector<std::vector<double> > basis_diff_update   = bkey->GetD();
 
-    int nq = basis_update[0].size();
+    int nq = Bmat[0].size();
 
     for(int i=0;i<P+1;i++)
     {   
-        std::vector<double> phi1 = basis_update[i];
-        std::vector<double> dphi1 = basis_diff_update[i];
+        std::vector<double> phi1 = Bmat[i];
+        std::vector<double> dphi1 = Dmat[i];
 
         for(int s=0;s<nq;s++)
         {
@@ -2445,8 +2275,8 @@ void GetElementStiffnessMatrixWeakNewBasis(int P,
 
         for(int j=0;j<P+1;j++)
         {
-            std::vector<double> phi2 = basis_update[j];
-            std::vector<double> dphi2 = basis_diff_update[j];
+            std::vector<double> phi2 = Bmat[j];
+            std::vector<double> dphi2 = Dmat[j];
 
             for(int s=0;s<nq;s++)
             {
