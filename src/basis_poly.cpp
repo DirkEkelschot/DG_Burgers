@@ -63,8 +63,6 @@ std::vector<double> BasisPoly::GetLeftRightSolution(std::vector<double> coeff)
     {
         lr_s[0] = lr_s[0]+m_blr[i][0]*coeff[i];
         lr_s[1] = lr_s[1]+m_blr[i][1]*coeff[i];
-
-        //std::cout << m_bl[i] << " " << m_br[i] << " " << coeff[i] << std::endl;
     }
 
     return lr_s;

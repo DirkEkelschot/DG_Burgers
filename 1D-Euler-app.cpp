@@ -1,7 +1,7 @@
 #include <torch/script.h> // One-stop header.
 #include <torch/torch.h>
 
-
+#include <chrono>
 #include <iostream>
 #include <memory>
 
@@ -88,7 +88,7 @@ void GetGlobalMassMatrixNew(int Nel, int P, std::vector<double> wquad, double *J
 
 void GetGlobalMassMatrixNewBasis(int Nel, int P, std::vector<double> wquad, double *Jac, int **map, int Mdim, Basis* bkey, double **MassMatGlobal);
 
-std::vector<double> ForwardTransform(int P, int np, std::vector<std::vector<double> > basis,  std::vector<double>wquad, int nq, double J, std::vector<double> input_quad);
+// std::vector<double> ForwardTransform(int P, int np, std::vector<std::vector<double> > basis,  std::vector<double>wquad, int nq, double J, std::vector<double> input_quad);
 
 
 extern "C" {extern void dgetrf_(int *, int *, double (*), int *, int [], int*);}
@@ -344,6 +344,8 @@ int main(int argc, char* argv[])
     double pR   = 0.1;
     double uR   = 0.0;
     double rhoR = 0.125;
+
+
     if(restart==0)
     {
 
@@ -353,6 +355,9 @@ int main(int argc, char* argv[])
             // Determine the coordinates in each element x.
             chi(nq, eln, x, zq.data(), Jac, bound);
 
+
+            double xstart = x[0];
+            
             // Smooth Initial Conditions
 
             // for(int i=0;i<nq;i++)
@@ -367,11 +372,12 @@ int main(int argc, char* argv[])
             
             // Places the element coordinates x into the right place in
             // the global coordinate vector.
+
             for(int i=0;i<nq;i++)
             {
                 X_DG_e[eln*nq+i] = x[i];
 
-                if(x[i]<0.5)
+                if(xstart<0.5)
                 {
                     double pressure        = pL;
                     U_DG_row0[eln*nq+i]    = rhoL;
@@ -379,7 +385,7 @@ int main(int argc, char* argv[])
                     U_DG_row2[eln*nq+i]    = (pL/gammaMone);
 
                 }
-                else if(x[i]>0.5)
+                else if(xstart>=0.5)
                 {
                     double pressure        = pR;
                     U_DG_row0[eln*nq+i]    = rhoR;
@@ -543,6 +549,10 @@ int main(int argc, char* argv[])
     int it = 0;
 
     int nanfound = 0;
+
+    auto start = std::chrono::high_resolution_clock::now();
+
+
     for(int t = 0; t < nt; t++)
     {
         
@@ -570,14 +580,6 @@ int main(int argc, char* argv[])
                 k1[0][i] = dt*R_DG0[0][i];
                 k1[1][i] = dt*R_DG0[1][i];
                 k1[2][i] = dt*R_DG0[2][i];
-
-                 if(std::isnan(U_DG[0][i]) || std::isnan(U_DG[1][i]) || std::isnan(U_DG[2][i]))
-                {
-                    //std::cout << "NaN " << X_DG_e[i] <<std::endl;
-                    nanfound = 1;
-                    t = nt;
-                }
-
             }
         }
 
@@ -588,20 +590,14 @@ int main(int argc, char* argv[])
             for(int i=0;i<(Nel*nq);i++)
             {
                 // std::cout << "R_DG0[0][i] " << R_DG0[0][i] << " " << R_DG0[1][i] << " " << R_DG0[2][i] << std::endl; 
-                k1_input[0][i]  = U_DG[0][i]+dt*R_DG0[0][i];
-                k1_input[1][i]  = U_DG[1][i]+dt*R_DG0[1][i];
-                k1_input[2][i]  = U_DG[2][i]+dt*R_DG0[2][i];
-
-
                 k1[0][i] = dt*R_DG0[0][i];
                 k1[1][i] = dt*R_DG0[1][i];
                 k1[2][i] = dt*R_DG0[2][i];
-
-                 if(std::isnan(U_DG[0][i]) || std::isnan(U_DG[1][i]) || std::isnan(U_DG[2][i]))
-                {
-                    //std::cout << "NaN " << X_DG_e[i] <<std::endl;
-                    t = nt;
-                }
+                
+                // k1_input = U_DG + k1/2 (half step)
+                k1_input[0][i] = U_DG[0][i] + 0.5*k1[0][i];
+                k1_input[1][i] = U_DG[1][i] + 0.5*k1[1][i];
+                k1_input[2][i] = U_DG[2][i] + 0.5*k1[2][i];
             }
 
             //CalculateRHSStrongDGEuler(np, nq, Nel, P, zq, wq, zq, D, Jac, map, bc_e, X_DG_e, k1_input, R_DG1, dt, basis_m);
@@ -609,20 +605,14 @@ int main(int argc, char* argv[])
             for(int i=0;i<(Nel*nq);i++)
             {
                 // std::cout << "R_DG0[0][i] " << R_DG0[0][i] << " " << R_DG0[1][i] << " " << R_DG0[2][i] << std::endl; 
-                k2_input[0][i]  = U_DG[0][i]+dt*R_DG1[0][i];
-                k2_input[1][i]  = U_DG[1][i]+dt*R_DG1[1][i];
-                k2_input[2][i]  = U_DG[2][i]+dt*R_DG1[2][i];
-
-
                 k2[0][i] = dt*R_DG1[0][i];
                 k2[1][i] = dt*R_DG1[1][i];
                 k2[2][i] = dt*R_DG1[2][i];
-
-                 if(std::isnan(U_DG[0][i]) || std::isnan(U_DG[1][i]) || std::isnan(U_DG[2][i]))
-                {
-                    //std::cout << "NaN " << X_DG_e[i] <<std::endl;
-                    t = nt;
-                }
+                
+                // k2_input = U_DG + k2/2 (half step)
+                k2_input[0][i] = U_DG[0][i] + 0.5*k2[0][i];
+                k2_input[1][i] = U_DG[1][i] + 0.5*k2[1][i];
+                k2_input[2][i] = U_DG[2][i] + 0.5*k2[2][i];
             }
 
             //CalculateRHSStrongDGEuler(np, nq, Nel, P, zq, wq, zq, D, Jac, map, bc_e, X_DG_e, k2_input, R_DG2, dt, basis_m);
@@ -639,12 +629,6 @@ int main(int argc, char* argv[])
                 k3[0][i] = dt*R_DG2[0][i];
                 k3[1][i] = dt*R_DG2[1][i];
                 k3[2][i] = dt*R_DG2[2][i];
-
-                 if(std::isnan(U_DG[0][i]) || std::isnan(U_DG[1][i]) || std::isnan(U_DG[2][i]))
-                {
-                    //std::cout << "NaN " << X_DG_e[i] <<std::endl;
-                    t = nt;
-                }
             }
 
             //CalculateRHSStrongDGEuler(np, nq, Nel, P, zq, wq, zq, D, Jac, map, bc_e, X_DG_e, k3_input, R_DG3, dt, basis_m);
@@ -678,13 +662,16 @@ int main(int argc, char* argv[])
         printProgressBar(t, nt);
        
          
-        //std::cout << "time = " << time << " iteration = "<< it <<  std::endl;
         
         time = time + dt; 
         it = it + 1;      
     }
 
-    
+    auto end = std::chrono::high_resolution_clock::now();
+
+    auto diff_us = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+    std::cout << "Time: " << diff_us.count() << " ms" << std::endl;
+
 
     std::cout << std::endl;
     std::cout << "time final = " << time << " iteration = "<< it <<  std::endl;
@@ -801,7 +788,6 @@ void CalculateRHSWeakDGEuler(int t, BasisPoly* bkeynew, Basis* bkey, int np, int
     {
         for(int i=0;i<nq;i++)
         {
-
             double rho  = U_DG[0][i + eln*nq];
             double rhou = U_DG[1][i + eln*nq];
             double E    = U_DG[2][i + eln*nq];
@@ -818,6 +804,7 @@ void CalculateRHSWeakDGEuler(int t, BasisPoly* bkeynew, Basis* bkey, int np, int
     F_DG[0] = F_DG_row0;
     F_DG[1] = F_DG_row1;
     F_DG[2] = F_DG_row2;
+
     // Transform fluxes forward into coefficient space.
     //==========================================================
     
@@ -837,13 +824,16 @@ void CalculateRHSWeakDGEuler(int t, BasisPoly* bkeynew, Basis* bkey, int np, int
     std::vector<double> Fcoeff_eq2(Nel*(P+1),0.0);
 
     std::map<int,std::vector<std::vector<double> > > traces;
-
+    // For now, the loop is kept the same for nodal and modal basis because over integration is required.
     for(int eln=0;eln<Nel;eln++)
     {
         double J = Jac[eln];
 
         double xstart = X_DG[eln*nq];
         double xend   = X_DG[eln*nq+nq-1];
+
+        //std::cout << xstart << " " << xend << std::endl;
+        
 
         dx[eln] = xend-xstart; 
         //std::cout << eln << " " << dx[eln] << std::endl;
@@ -856,6 +846,8 @@ void CalculateRHSWeakDGEuler(int t, BasisPoly* bkeynew, Basis* bkey, int np, int
             quad_eq0_trace[i] = U_DG[0][i+eln*nq];
             quad_eq1_trace[i] = U_DG[1][i+eln*nq];
             quad_eq2_trace[i] = U_DG[2][i+eln*nq];
+
+            //std::cout << i+eln*nq << " " << U_DG[0][i+eln*nq] << std::endl;
         }
 
         std::vector<double> coeff_eq0 = ForwardTransform(P, Bmat, wquad, nq, J, quad_eq0);
@@ -871,7 +863,24 @@ void CalculateRHSWeakDGEuler(int t, BasisPoly* bkeynew, Basis* bkey, int np, int
         trace[0] =  bkeynew->GetLeftRightSolution(coeff_eq0_trace);
         trace[1] =  bkeynew->GetLeftRightSolution(coeff_eq1_trace);
         trace[2] =  bkeynew->GetLeftRightSolution(coeff_eq2_trace);
-        
+
+        // if(fabs(xstart-0.5)<1.0e-01 || fabs(xend-0.5)<1.0e-01 )
+        // {
+        //     std::cout << "MIDDLE " << xstart << " " << xend << std::endl;
+        //     // std::cout << trace[0][0] << " " << trace[0][1] << std::endl;
+        //     // std::cout << trace[1][0] << " " << trace[1][1] << std::endl;
+        //     // std::cout << trace[2][0] << " " << trace[2][1] << std::endl;
+        //     std::cout << "coeff " << std::endl;
+        //     for(int j=0;j<coeff_eq0_trace.size();j++)
+        //     {
+        //         std::cout << coeff_eq0_trace[j]  << " " << coeff_eq1_trace[j] << " " << coeff_eq2_trace[j] << std::endl;
+        //     }
+        //     std::cout << "quad " << std::endl;
+        //     for(int j=0;j<quad_eq0_trace.size();j++)
+        //     {
+        //         std::cout << quad_eq0_trace[j]  << " " << quad_eq1_trace[j] << " " << quad_eq2_trace[j] << std::endl;
+        //     }
+        // }
         for(int i = 0;i < (P+1);i++)
         {
             Fcoeff_eq0[i+eln*(P+1)] = coeff_eq0[i];
@@ -1006,7 +1015,7 @@ void CalculateRHSWeakDGEuler(int t, BasisPoly* bkeynew, Basis* bkey, int np, int
         double rhoLFwd  = uLFwd[0];
         double rhouLFwd = uLFwd[1];
         double ELFwd    = uLFwd[2];
-        double uLFwd_s    = rhouLFwd/rhoLFwd;
+        double uLFwd_s  = rhouLFwd/rhoLFwd;
         double pLFwd    = (ELFwd-0.5*rhoLFwd*uLFwd_s*uLFwd_s)*gammaMone;
         // Evaluate the flux at each quadrature point.
 
@@ -1099,6 +1108,13 @@ void CalculateRHSWeakDGEuler(int t, BasisPoly* bkeynew, Basis* bkey, int np, int
 
     double **MassMatGlobal0          = dmatrix(Mdim);
     GetGlobalMassMatrixNew(Nel, P, wquad, Jac, map, Mdim, Bmat, MassMatGlobal0);
+    for(int i=0;i<Mdim;i++)
+    {
+        for(int j=0;j<Mdim;j++){
+            std::cout << MassMatGlobal0[i][j] << " ";
+        }
+        std::cout << std::endl;
+    }
     // GetGlobalMassMatrixNewBasis(Nel, P, wquad, Jac, map, Mdim, bkey, MassMatGlobal0);
     double **MassMatGlobal1          = dmatrix(Mdim);
     GetGlobalMassMatrixNew(Nel, P, wquad, Jac, map, Mdim, Bmat, MassMatGlobal1);
@@ -1107,14 +1123,63 @@ void CalculateRHSWeakDGEuler(int t, BasisPoly* bkeynew, Basis* bkey, int np, int
     GetGlobalMassMatrixNew(Nel, P, wquad, Jac, map, Mdim, Bmat, MassMatGlobal2);
     // GetGlobalMassMatrixNewBasis(Nel, P, wquad, Jac, map, Mdim, bkey, MassMatGlobal0);
 
-    dgetrf_(&Mdim, &Mdim, MassMatGlobal0[0], &Mdim, ipiv, &INFO);
-    dgetrf_(&Mdim, &Mdim, MassMatGlobal1[0], &Mdim, ipiv, &INFO);
-    dgetrf_(&Mdim, &Mdim, MassMatGlobal2[0], &Mdim, ipiv, &INFO);
-
-    dgetrs_(&TRANS, &Mdim, &NRHS, MassMatGlobal0[0], &Mdim, ipiv, Ucoeff_eq0.data(), &Mdim, &INFO);
-    dgetrs_(&TRANS, &Mdim, &NRHS, MassMatGlobal1[0], &Mdim, ipiv, Ucoeff_eq1.data(), &Mdim, &INFO);
-    dgetrs_(&TRANS, &Mdim, &NRHS, MassMatGlobal2[0], &Mdim, ipiv, Ucoeff_eq2.data(), &Mdim, &INFO);
+    // auto start = std::chrono::high_resolution_clock::now();
     
+    // dgetrf_(&Mdim, &Mdim, MassMatGlobal0[0], &Mdim, ipiv, &INFO);
+    // dgetrf_(&Mdim, &Mdim, MassMatGlobal1[0], &Mdim, ipiv, &INFO);
+    // dgetrf_(&Mdim, &Mdim, MassMatGlobal2[0], &Mdim, ipiv, &INFO);
+
+    // dgetrs_(&TRANS, &Mdim, &NRHS, MassMatGlobal0[0], &Mdim, ipiv, Ucoeff_eq0.data(), &Mdim, &INFO);
+    // dgetrs_(&TRANS, &Mdim, &NRHS, MassMatGlobal1[0], &Mdim, ipiv, Ucoeff_eq1.data(), &Mdim, &INFO);
+    // dgetrs_(&TRANS, &Mdim, &NRHS, MassMatGlobal2[0], &Mdim, ipiv, Ucoeff_eq2.data(), &Mdim, &INFO);
+    
+    // auto end = std::chrono::high_resolution_clock::now();
+
+    bool useDiagonalSolve = (btype == "Nodal" && ptype == "GaussLegendre");
+    // Interestingly enough I get a different solution if I run the O(N) iversion vs classical LU composition. why is that?
+    if(useDiagonalSolve)
+    {
+        //std::cout << "Using diagonal solve" << std::endl;
+        // Diagonal mass matrix solve: O(N) instead of O(N³)
+        // For GLL nodal: M[i][i] = J * w[i] (diagonal entries only)
+        // dgetrf_(&Mdim, &Mdim, MassMatGlobal0[0], &Mdim, ipiv, &INFO);
+        // dgetrf_(&Mdim, &Mdim, MassMatGlobal1[0], &Mdim, ipiv, &INFO);
+        // dgetrf_(&Mdim, &Mdim, MassMatGlobal2[0], &Mdim, ipiv, &INFO);
+
+        // dgetrs_(&TRANS, &Mdim, &NRHS, MassMatGlobal0[0], &Mdim, ipiv, Ucoeff_eq0.data(), &Mdim, &INFO);
+        // dgetrs_(&TRANS, &Mdim, &NRHS, MassMatGlobal1[0], &Mdim, ipiv, Ucoeff_eq1.data(), &Mdim, &INFO);
+        // dgetrs_(&TRANS, &Mdim, &NRHS, MassMatGlobal2[0], &Mdim, ipiv, Ucoeff_eq2.data(), &Mdim, &INFO);
+        for(int i = 0; i < Mdim; i++)
+        {
+            double diag0 = MassMatGlobal0[i][i];
+            double diag1 = MassMatGlobal1[i][i];
+            double diag2 = MassMatGlobal2[i][i];
+            
+            // Safety check for zero diagonal
+            if(std::abs(diag0) < 1e-15 || std::abs(diag1) < 1e-15 || std::abs(diag2) < 1e-15)
+            {
+                std::cerr << "ERROR: Zero or near-zero diagonal in mass matrix at index " << i << std::endl;
+                std::cerr << "diag0=" << diag0 << ", diag1=" << diag1 << ", diag2=" << diag2 << std::endl;
+                exit(1);
+            }
+            
+            // Element-wise division: O(1) per element, O(N) total
+            Ucoeff_eq0[i] = Ucoeff_eq0[i] / diag0;
+            Ucoeff_eq1[i] = Ucoeff_eq1[i] / diag1;
+            Ucoeff_eq2[i] = Ucoeff_eq2[i] / diag2;
+        }
+    }
+    else
+    {
+        // Full LU factorization for modal or non-GLL nodal: O(N³)
+        dgetrf_(&Mdim, &Mdim, MassMatGlobal0[0], &Mdim, ipiv, &INFO);
+        dgetrf_(&Mdim, &Mdim, MassMatGlobal1[0], &Mdim, ipiv, &INFO);
+        dgetrf_(&Mdim, &Mdim, MassMatGlobal2[0], &Mdim, ipiv, &INFO);
+
+        dgetrs_(&TRANS, &Mdim, &NRHS, MassMatGlobal0[0], &Mdim, ipiv, Ucoeff_eq0.data(), &Mdim, &INFO);
+        dgetrs_(&TRANS, &Mdim, &NRHS, MassMatGlobal1[0], &Mdim, ipiv, Ucoeff_eq1.data(), &Mdim, &INFO);
+        dgetrs_(&TRANS, &Mdim, &NRHS, MassMatGlobal2[0], &Mdim, ipiv, Ucoeff_eq2.data(), &Mdim, &INFO);
+    }
     // Transform back onto quadrature points.
     std::vector<double> R_DG_row0(Nel*nq,0.0);
     std::vector<double> R_DG_row1(Nel*nq,0.0);
