@@ -413,6 +413,14 @@ void run_new_basis_test(std::vector<double> zq, std::vector<double>  wq, int nq,
     }
     solout2.close();
 
+    ofstream solout3;
+    solout3.open("new_nodal_weights.out");
+    for(int j=0;j<wq.size();j++)
+    {
+            solout3 << wq[j] << endl;
+    }
+    solout3.close();
+
 
     // MODAL BASIS TEST USING THE NEW IMPLEMENTATION
 
