@@ -28,66 +28,19 @@ using namespace polylib;
 std::vector<double> RoeRiemannVec(std::vector<double> Ul, std::vector<double> Ur, double normal);
 std::vector<double> LaxFriedrichsRiemannVec(int t, std::vector<double> Ul, std::vector<double> Ur, double normal, int eln);
 void GetAllFwdBwdMapVec(int Nel, int np, std::vector<std::vector<double> > quad, std::map<int,std::vector<std::vector<double> > > &Umap, int nvar);
-void CalculateRHS_Modal(int np, int nq, int Nel, int P, std::vector<double> zquad, std::vector<double> wquad, std::vector<double> z, double **D, double *Jac, int **map, double *bc, double *X_DG, double *U_DG, double *R_DG, double dt);
-void CalculateRHS(int np, int nq, int Nel, int P, std::vector<double> zquad, std::vector<double> wquad, std::vector<double> z, double **D, double *Jac, int **map, double *bc, double *X_DG, double *U_DG, double *R_DG, double dt, std::vector<std::vector<double> > basis);
-void CalculateRHSWeakFR(int np, int nq, int Nel, int P, std::vector<double> zquad, std::vector<double> wquad, std::vector<double> z, double **D, double *Jac, int **map, double *bc, double *X_DG, double *U_DG, double *R_DG, double dt, std::vector<std::vector<double> > basis, std::vector<std::vector<double> > basisRadauM, std::vector<std::vector<double> > basisRadauP);
-void CalculateRHSStrongFR(int np, int nq, int Nel, int P, std::vector<double> zquad, std::vector<double> wquad, std::vector<double> z, double **D, double *Jac, int **map, double *bc, double *X_DG, double *U_DG, double *R_DG, double dt, std::vector<std::vector<double> > basis, std::vector<std::vector<double> > basisRadauM, std::vector<std::vector<double> > basisRadauP);
-void CalculateRHSStrongDGEuler(int t, Basis* bkey, int np, int nq, int Nel, int P, std::vector<double> zquad, std::vector<double> wquad, std::vector<double> z, double **D, double *Jac, int **map, std::vector<std::vector<double> > bc, std::vector<double> X_DG, std::vector<std::vector<double> > U_DG, std::vector<std::vector<double> > &R_DG, double dt, std::vector<std::vector<double> > basis);
-void CalculateRHSWeakDGEuler(int t, BasisPoly* bkeynew, Basis* bkey, int np, int nq, int Nel, int P, std::vector<double> zquad, std::vector<double> wquad, std::vector<double> z, std::string btype, std::string ptype, double **D, double *Jac, int **map, std::vector<std::vector<double> > bc, std::vector<double> X_DG, std::vector<std::vector<double> > U_DG, std::vector<std::vector<double> > &R_DG, double dt, std::vector<std::vector<double> > basis,double **MassMatFactored, int *ipiv, double **StiffnessMatGlobal);
 
-void *negatednormals(int Nel, double *n);
-int **iarray(int n,int m);
-//std::vector<std::vector<double> > getNodalBasis(std::vector<double> zquad, int nq, int np, int P);
-//std::vector<std::vector<double> > getNodalBasisEval(std::vector<double> zquad_eval,std::vector<double> zquad, int nq, int np, int P);
-//std::vector<std::vector<double> > getModalBasis(std::vector<double> zquad, int nq, int np, inCalculateRHSStrongDGEulert P);
-//std::vector<std::vector<double> > getModalBasisEval(std::vector<double> zquad_eval, std::vector<double> zquad, int nq, int np, int P);
-//std::vector<std::vector<double> > getLegendreBasisEval(std::vector<double> zquad_eval, std::vector<double> zquad, int nq, int np, int P);
-
-//std::vector<std::vector<double> > getRadauPlusBasisEval(std::vector<double> zquad_eval, std::vector<double> zquad, int nq, int np, int P);
-//std::vector<std::vector<double> > getRadauMinusBasisEval(std::vector<double> zquad_eval, std::vector<double> zquad, int nq, int np, int P);
+void CalculateRHSWeakDGEuler(int t, BasisPoly* bkeynew, Basis* bkey, int np, int nq, int Nel, int P, std::vector<double> wquad, std::string btype, std::string ptype, double *Jac, std::vector<std::vector<double> > bc, std::vector<double> X_DG, const std::vector<std::vector<double> >& U_DG, std::vector<std::vector<double> > &R_DG, double dt, std::vector<double>& MassMatFactored, std::vector<int>& ipiv, std::vector<double>& StiffnessMatGlobal);
 void GetAllFwdBwd(int Nel, int nq, double *bc, double *quad, std::vector<double> &UtL, std::vector<double> &UtR);
-void GetAllFwdBwdMap(int Nel, int nq, double *quad, std::map<int,std::vector<double> > &Umap);
-void GetAllFwdBwdMapCoeff(int Nel, int P, double *coeff, std::map<int,std::vector<double> > &Umap);
-void TraceMap(int np, int Nel, int **trace);
-std::vector<double> BackwardTransformLagrange(int P, std::vector<double> zquad, std::vector<double> wquad, int nq, double J, std::vector<double> coeff, std::vector<double> z, int np);
 void InnerProductWRTDerivBasis(int np, int P, double J, double *w, double *z, double **D, double *F_DG, double *coeff);
-void GetGlobalMassMatrix(int Nel, int P, int np, int nq, std::vector<double> zquad, std::vector<double> wquad, std::vector<double> z, double *Jac, int **map, int Mdim, double **MassMatGlobal);
-void GetGlobalMassMatrix_Modal(int Nel, int P, int np, int nq, std::vector<double> zquad, std::vector<double> wquad,  std::vector<double> z, double *Jac, int **map, int Mdim, double **MassMatGlobal);
-void *basis(int np, int P, int i, double *z, double *phi);
-void getbasis(int np, int P, int ncoeff, double *z, double **basis);
-void getdbasis(int np, int P, double J, double **D, double **basis, double **dbasis);
 
 // void *diff(int np, double **D, double *p, double *pd, double J);
 void *elbound(int Nel, double *bound,double Ldom,double Rdom);
-int **imatrix(int nrow, int ncol);
-void *mapping(int Nel, int P, int **map);
+void mapping(int Nel, int P, std::vector<std::vector<int>>& map);
 double integr(int np, double *w, double *phi1, double *phi2);
-double *dvector(int np);
-int *ivector(int n);
 void *chi(int np, int eln, double *x,double *z, double *Jac, double *bound);
-void *basis(int np, int P, int i, double *z, double *phi);
-double **dmatrix(int Mdim);
-double **darray(int n,int m);
-void evaluateflux(int np, double *u_DG, double *Flux_DG);
-void GetGlobalStiffnessMatrixWeakNew(int Nel, int P, std::vector<double> wquad, double **D, double *Jac, int **map, int Mdim, std::vector<std::vector<double> > basis, double **StiffnessGlobal);
-void GetElementStiffnessMatrix(int np, int nq, int P, std::vector<double> zquad, std::vector<double> wquad, std::vector<double> z, double **D, double J, double **StiffMatElem);
-void GetElementStiffnessMatrixNew(int P, std::vector<double> wquad, double **D, double J, std::vector<std::vector<double> > basis, double **StiffMatElem);
-void GetGlobalStiffnessMatrixNew(int Nel, int P, std::vector<double> wquad, double **D, double *Jac, int **map, int Mdim, std::vector<std::vector<double> > basis, double **StiffnessGlobal);
-void GetElementStiffnessMatrixWeakNew(int P, std::vector<double> wquad, double **D, double J, std::vector<std::vector<double> > basis, double **StiffMatElem);
-void GetGlobalStiffnessMatrix(int Nel, int P, int np, int nq, std::vector<double> zquad, std::vector<double> wquad, std::vector<double> z, double **D, double *Jac, int **map, int Mdim, double **StiffnessGlobal);
 void GetElementStiffnessMatrixWeakNewBasis(int P, std::vector<double> wquad, double **D, double J, std::vector<std::vector<double> > Bmat, std::vector<std::vector<double> > Dmat, double **StiffMatElem);
-void GetGlobalStiffnessMatrixWeakNewBasis(std::vector<std::vector<double> > Bmat, std::vector<std::vector<double> > Dmat, int Nel, int P, std::vector<double> wquad, double **D, double *Jac, int **map, int Mdim, std::vector<std::vector<double> > basis, double **StiffnessGlobal);
-
-void GetElementStiffnessMatrixNewBasis(int P, std::vector<double> wquad, double **D, double J, Basis* bkey, double **StiffMatElem);
-void GetGlobalStiffnessMatrixNewBasis(int Nel, int P, std::vector<double> wquad, double **D, double *Jac, int **map, int Mdim, Basis* bkey, double **StiffnessGlobal);
-
-
-std::vector<double> modal_basis(int np, int P, int i, std::vector<double> z);
-void GetGlobalStiffnessMatrix_Modal(int Nel, int P, int np, int nq, std::vector<double> zquad, std::vector<double> wquad, std::vector<double> z, double **D, double *Jac, int **map, int Mdim, double **StiffnessGlobal);
-void GetElementStiffnessMatrix_Modal(int np, int nq, int P, std::vector<double> zquad, std::vector<double> wquad, std::vector<double> z, double **D, double J, double **StiffMatElem);
-void GetGlobalMassMatrixNew(int Nel, int P, std::vector<double> wquad, double *Jac, int **map, int Mdim, std::vector<std::vector<double> > basis, double **MassMatGlobal);
-
-void GetGlobalMassMatrixNewBasis(int Nel, int P, std::vector<double> wquad, double *Jac, int **map, int Mdim, Basis* bkey, double **MassMatGlobal);
+void GetGlobalStiffnessMatrixWeakNewBasis(std::vector<std::vector<double> > Bmat, std::vector<std::vector<double> > Dmat, int Nel, int P, std::vector<double> wquad, double **D, double *Jac, std::vector<std::vector<int>> map, int Mdim, std::vector<std::vector<double> > basis, std::vector<double>& StiffnessGlobal);
+void GetGlobalMassMatrixNew(int Nel, int P, std::vector<double> wquad, double *Jac, std::vector<std::vector<int>> map, int Mdim, std::vector<std::vector<double> > basis, std::vector<double>& MassMatGlobal);
 
 // std::vector<double> ForwardTransform(int P, int np, std::vector<std::vector<double> > basis,  std::vector<double>wquad, int nq, double J, std::vector<double> input_quad);
 
@@ -270,9 +223,9 @@ int main(int argc, char* argv[])
     std::vector<std::vector<double> > basis_m;
     std::vector<std::vector<double> > basis_rm;
     std::vector<std::vector<double> > basis_rp;
-    double* bound           = dvector(Nel+1);
-    double* Jac             = dvector(Nel);
-    elbound(Nel, bound, 0.0, 1.0);
+    std::vector<double> bound(Nel+1,0.0);
+    std::vector<double> Jac(Nel,0.0);
+    elbound(Nel, bound.data(), 0.0, 1.0);
     
     np = P + 1;
     nq = nquad;
@@ -336,10 +289,12 @@ int main(int argc, char* argv[])
     std::vector<double> U_DG_row1(Nel*nq,0.0);
     std::vector<double> U_DG_row2(Nel*nq,0.0);
 
-    int** map  = imatrix(Nel, P+1);
+    std::vector<std::vector<int>> map(Nel, std::vector<int>(P+1));
     mapping(Nel, P, map);
     
-    double* x                   = dvector(nq);
+    // double* x                   = dvector(nq);
+    std::vector<double> x(nq,0.0);
+
     double gammaMone = 1.4 - 1.0;
     double pL   = 1.0;
     double uL   = 0.0;
@@ -357,7 +312,7 @@ int main(int argc, char* argv[])
         for(int eln=0;eln<Nel;eln++)
         {
             // Determine the coordinates in each element x.
-            chi(nq, eln, x, zq.data(), Jac, bound);
+            chi(nq, eln, x.data(), zq.data(), Jac.data(), bound.data());
 
 
             double xstart = x[0];
@@ -556,15 +511,15 @@ int main(int argc, char* argv[])
     int Mdim                        = (P+1)*Nel;
     std::vector<std::vector<double> > Bmat = bkey->GetB();
     std::vector<std::vector<double> > Dmat = bkey->GetD();
-    double **MassMatGlobal          = dmatrix(Mdim);
-    GetGlobalMassMatrixNew(Nel, P, wq, Jac, map, Mdim, Bmat, MassMatGlobal);
+    std::vector<double> MassMatGlobal(Mdim * Mdim, 0.0);
+    GetGlobalMassMatrixNew(Nel, P, wq, Jac.data(), map, Mdim, Bmat, MassMatGlobal);
     
-    int *ipiv = ivector(Mdim);
+    std::vector<int> ipiv(Mdim, 0);
     int INFO;
-    dgetrf_(&Mdim, &Mdim, MassMatGlobal[0], &Mdim, ipiv, &INFO);
+    dgetrf_(&Mdim, &Mdim, MassMatGlobal.data(), &Mdim, ipiv.data(), &INFO);
     
-    double **StiffnessMatGlobal = dmatrix(Mdim);
-    GetGlobalStiffnessMatrixWeakNewBasis(Bmat, Dmat, Nel, P, wq, D, Jac, map, Mdim, Bmat, StiffnessMatGlobal);
+    std::vector<double> StiffnessMatGlobal(Mdim * Mdim, 0.0);
+    GetGlobalStiffnessMatrixWeakNewBasis(Bmat, Dmat, Nel, P, wq, D, Jac.data(), map, Mdim, Bmat, StiffnessMatGlobal);
     
     auto start = std::chrono::high_resolution_clock::now();
 
@@ -583,7 +538,7 @@ int main(int argc, char* argv[])
         if(timeScheme==0)
         {
             //CalculateRHSStrongDGEuler(bModalkey, np, nq, Nel, P, zq, wq, zq, D, Jac, map, bc_e, X_DG_e, U_DG, R_DG0, dt, basis_m);
-            CalculateRHSWeakDGEuler(t, readBasis.get(), bkey, np, nq, Nel, P, zq, wq, zq, inputs->btype, inputs->ptype, D, Jac, map, bc_e, X_DG_e, U_DG, R_DG0, dt, basis_m, MassMatGlobal, ipiv, StiffnessMatGlobal);
+            CalculateRHSWeakDGEuler(t, readBasis.get(), bkey, np, nq, Nel, P, wq, inputs->btype, inputs->ptype, Jac.data(), bc_e, X_DG_e, U_DG, R_DG0, dt, MassMatGlobal, ipiv, StiffnessMatGlobal);
 
             for(int i=0;i<(Nel*nq);i++)
             {
@@ -601,7 +556,7 @@ int main(int argc, char* argv[])
         if(timeScheme==1)
         {
             //CalculateRHSStrongDGEuler(np, nq, Nel, P, zq, wq, zq, D, Jac, map, bc_e, X_DG_e, U_DG, R_DG0, dt, basis_m);
-            CalculateRHSWeakDGEuler(t,readBasis.get(), bkey, np, nq, Nel, P, zq, wq, zq, inputs->btype, inputs->ptype, D, Jac, map, bc_e, X_DG_e, U_DG, R_DG0, dt, basis_m, MassMatGlobal, ipiv, StiffnessMatGlobal);
+            CalculateRHSWeakDGEuler(t, readBasis.get(), bkey, np, nq, Nel, P, wq, inputs->btype, inputs->ptype, Jac.data(), bc_e, X_DG_e, U_DG, R_DG0, dt, MassMatGlobal, ipiv, StiffnessMatGlobal);
             for(int i=0;i<(Nel*nq);i++)
             {
                 // std::cout << "R_DG0[0][i] " << R_DG0[0][i] << " " << R_DG0[1][i] << " " << R_DG0[2][i] << std::endl; 
@@ -616,7 +571,7 @@ int main(int argc, char* argv[])
             }
 
             //CalculateRHSStrongDGEuler(np, nq, Nel, P, zq, wq, zq, D, Jac, map, bc_e, X_DG_e, k1_input, R_DG1, dt, basis_m);
-            CalculateRHSWeakDGEuler(t, readBasis.get(), bkey, np, nq, Nel, P, zq, wq, zq, inputs->btype, inputs->ptype, D, Jac, map, bc_e, X_DG_e, k1_input, R_DG1, dt, basis_m, MassMatGlobal, ipiv, StiffnessMatGlobal);
+            CalculateRHSWeakDGEuler(t, readBasis.get(), bkey, np, nq, Nel, P, wq, inputs->btype, inputs->ptype, Jac.data(), bc_e, X_DG_e, k1_input, R_DG1, dt, MassMatGlobal, ipiv, StiffnessMatGlobal);
             for(int i=0;i<(Nel*nq);i++)
             {
                 // std::cout << "R_DG0[0][i] " << R_DG0[0][i] << " " << R_DG0[1][i] << " " << R_DG0[2][i] << std::endl; 
@@ -631,7 +586,7 @@ int main(int argc, char* argv[])
             }
 
             //CalculateRHSStrongDGEuler(np, nq, Nel, P, zq, wq, zq, D, Jac, map, bc_e, X_DG_e, k2_input, R_DG2, dt, basis_m);
-            CalculateRHSWeakDGEuler(t, readBasis.get(), bkey, np, nq, Nel, P, zq, wq, zq, inputs->btype, inputs->ptype, D, Jac, map, bc_e, X_DG_e, k2_input, R_DG2, dt, basis_m, MassMatGlobal, ipiv, StiffnessMatGlobal);
+            CalculateRHSWeakDGEuler(t, readBasis.get(), bkey, np, nq, Nel, P, wq, inputs->btype, inputs->ptype, Jac.data(), bc_e, X_DG_e, k2_input, R_DG2, dt, MassMatGlobal, ipiv, StiffnessMatGlobal);
 
             for(int i=0;i<(Nel*nq);i++)
             {
@@ -647,7 +602,7 @@ int main(int argc, char* argv[])
             }
 
             //CalculateRHSStrongDGEuler(np, nq, Nel, P, zq, wq, zq, D, Jac, map, bc_e, X_DG_e, k3_input, R_DG3, dt, basis_m);
-            CalculateRHSWeakDGEuler(t, readBasis.get(), bkey, np, nq, Nel, P, zq, wq, zq, inputs->btype, inputs->ptype, D, Jac, map, bc_e, X_DG_e, k3_input, R_DG3, dt, basis_m, MassMatGlobal, ipiv, StiffnessMatGlobal);
+            CalculateRHSWeakDGEuler(t, readBasis.get(), bkey, np, nq, Nel, P, wq, inputs->btype, inputs->ptype, Jac.data(), bc_e, X_DG_e, k3_input, R_DG3, dt, MassMatGlobal, ipiv, StiffnessMatGlobal);
 
 
             for(int i=0;i<(Nel*nq);i++)
@@ -777,7 +732,7 @@ double LaxFriedrichsRiemann(double Ul, double Ur, double n)
 
 
 
-void CalculateRHSWeakDGEuler(int t, BasisPoly* bkeynew, Basis* bkey, int np, int nq, int Nel, int P, std::vector<double> zquad, std::vector<double> wquad, std::vector<double> z, std::string btype, std::string ptype, double **D, double *Jac, int **map, std::vector<std::vector<double> > bc, std::vector<double> X_DG, std::vector<std::vector<double> > U_DG, std::vector<std::vector<double> > &R_DG, double dt, std::vector<std::vector<double> > basis,double **MassMatFactored, int *ipiv, double **StiffnessMatGlobal)
+void CalculateRHSWeakDGEuler(int t, BasisPoly* bkeynew, Basis* bkey, int np, int nq, int Nel, int P, std::vector<double> wquad, std::string btype, std::string ptype, double *Jac, std::vector<std::vector<double> > bc, std::vector<double> X_DG, const std::vector<std::vector<double> >& U_DG, std::vector<std::vector<double> > &R_DG, double dt, std::vector<double>& MassMatFactored, std::vector<int>& ipiv, std::vector<double>& StiffnessMatGlobal)
 {
     unsigned char TRANS = 'T';
     int NRHS=1,INFO,ONE_INT=1;
@@ -1102,13 +1057,16 @@ void CalculateRHSWeakDGEuler(int t, BasisPoly* bkeynew, Basis* bkey, int np, int
     // GetGlobalStiffnessMatrixWeakNew(Nel, P, wquad, D, Jac, map, Mdim, basis_update, StiffnessMatGlobal);
     // GetGlobalStiffnessMatrixWeakNewBasis(Bmat, Dmat, Nel, P, wquad, D, Jac, map, Mdim, Bmat, StiffnessMatGlobal);
    
-    double *tmp0                     = dvector(Mdim);
-    double *tmp1                     = dvector(Mdim);
-    double *tmp2                     = dvector(Mdim);
+    // double *tmp0                     = dvector(Mdim);
+    // double *tmp1                     = dvector(Mdim);
+    // double *tmp2                     = dvector(Mdim);
+    std::vector<double> tmp0_vec(Mdim,0.0);
+    std::vector<double> tmp1_vec(Mdim,0.0);
+    std::vector<double> tmp2_vec(Mdim,0.0);
 
-    dgemv_(&TRANS,&Mdim,&Mdim,&ONE_DOUBLE,StiffnessMatGlobal[0],&Mdim,F_DG_coeff[0].data(),&ONE_INT,&ZERO_DOUBLE,tmp0,&ONE_INT);
-    dgemv_(&TRANS,&Mdim,&Mdim,&ONE_DOUBLE,StiffnessMatGlobal[0],&Mdim,F_DG_coeff[1].data(),&ONE_INT,&ZERO_DOUBLE,tmp1,&ONE_INT);
-    dgemv_(&TRANS,&Mdim,&Mdim,&ONE_DOUBLE,StiffnessMatGlobal[0],&Mdim,F_DG_coeff[2].data(),&ONE_INT,&ZERO_DOUBLE,tmp2,&ONE_INT);
+    dgemv_(&TRANS,&Mdim,&Mdim,&ONE_DOUBLE,StiffnessMatGlobal.data(),&Mdim,F_DG_coeff[0].data(),&ONE_INT,&ZERO_DOUBLE,tmp0_vec.data(),&ONE_INT);
+    dgemv_(&TRANS,&Mdim,&Mdim,&ONE_DOUBLE,StiffnessMatGlobal.data(),&Mdim,F_DG_coeff[1].data(),&ONE_INT,&ZERO_DOUBLE,tmp1_vec.data(),&ONE_INT);
+    dgemv_(&TRANS,&Mdim,&Mdim,&ONE_DOUBLE,StiffnessMatGlobal.data(),&Mdim,F_DG_coeff[2].data(),&ONE_INT,&ZERO_DOUBLE,tmp2_vec.data(),&ONE_INT);
 
     std::vector<double> Ucoeff_eq0(Mdim,0.0);
     std::vector<double> Ucoeff_eq1(Mdim,0.0);
@@ -1116,77 +1074,41 @@ void CalculateRHSWeakDGEuler(int t, BasisPoly* bkeynew, Basis* bkey, int np, int
 
     for(int i = 0;i < Mdim; i++)
     {
-        Ucoeff_eq0[i] = tmp0[i]-numcoeff_eq0[i];
-        Ucoeff_eq1[i] = tmp1[i]-numcoeff_eq1[i];
-        Ucoeff_eq2[i] = tmp2[i]-numcoeff_eq2[i];
+        Ucoeff_eq0[i] = tmp0_vec[i]-numcoeff_eq0[i];
+        Ucoeff_eq1[i] = tmp1_vec[i]-numcoeff_eq1[i];
+        Ucoeff_eq2[i] = tmp2_vec[i]-numcoeff_eq2[i];
     }
 
-    // double **MassMatGlobal0          = dmatrix(Mdim);
-    // GetGlobalMassMatrixNew(Nel, P, wquad, Jac, map, Mdim, Bmat, MassMatGlobal0);
-    // // GetGlobalMassMatrixNewBasis(Nel, P, wquad, Jac, map, Mdim, bkey, MassMatGlobal0);
-    // double **MassMatGlobal1          = dmatrix(Mdim);
-    // GetGlobalMassMatrixNew(Nel, P, wquad, Jac, map, Mdim, Bmat, MassMatGlobal1);
-    // // GetGlobalMassMatrixNewBasis(Nel, P, wquad, Jac, map, Mdim, bkey, MassMatGlobal0);
-    // double **MassMatGlobal2          = dmatrix(Mdim);
-    // GetGlobalMassMatrixNew(Nel, P, wquad, Jac, map, Mdim, Bmat, MassMatGlobal2);
-    // GetGlobalMassMatrixNewBasis(Nel, P, wquad, Jac, map, Mdim, bkey, MassMatGlobal0);
-
-    // auto start = std::chrono::high_resolution_clock::now();
-    
-    // dgetrf_(&Mdim, &Mdim, MassMatGlobal0[0], &Mdim, ipiv, &INFO);
-    // dgetrf_(&Mdim, &Mdim, MassMatGlobal1[0], &Mdim, ipiv, &INFO);
-    // dgetrf_(&Mdim, &Mdim, MassMatGlobal2[0], &Mdim, ipiv, &INFO);
-
-    // dgetrs_(&TRANS, &Mdim, &NRHS, MassMatGlobal0[0], &Mdim, ipiv, Ucoeff_eq0.data(), &Mdim, &INFO);
-    // dgetrs_(&TRANS, &Mdim, &NRHS, MassMatGlobal1[0], &Mdim, ipiv, Ucoeff_eq1.data(), &Mdim, &INFO);
-    // dgetrs_(&TRANS, &Mdim, &NRHS, MassMatGlobal2[0], &Mdim, ipiv, Ucoeff_eq2.data(), &Mdim, &INFO);
-    
-    // auto end = std::chrono::high_resolution_clock::now();
 
     bool useDiagonalSolve = (btype == "Nodal" && ptype == "GaussLegendre");
     // Interestingly enough I get a different solution if I run the O(N) iversion vs classical LU composition. why is that?
     if(useDiagonalSolve)
     {
-        //std::cout << "Using diagonal solve" << std::endl;
-        // Diagonal mass matrix solve: O(N) instead of O(N³)
-        // For GLL nodal: M[i][i] = J * w[i] (diagonal entries only)
-        // dgetrf_(&Mdim, &Mdim, MassMatGlobal0[0], &Mdim, ipiv, &INFO);
-        // dgetrf_(&Mdim, &Mdim, MassMatGlobal1[0], &Mdim, ipiv, &INFO);
-        // dgetrf_(&Mdim, &Mdim, MassMatGlobal2[0], &Mdim, ipiv, &INFO);
-
-        // dgetrs_(&TRANS, &Mdim, &NRHS, MassMatGlobal0[0], &Mdim, ipiv, Ucoeff_eq0.data(), &Mdim, &INFO);
-        // dgetrs_(&TRANS, &Mdim, &NRHS, MassMatGlobal1[0], &Mdim, ipiv, Ucoeff_eq1.data(), &Mdim, &INFO);
-        // dgetrs_(&TRANS, &Mdim, &NRHS, MassMatGlobal2[0], &Mdim, ipiv, Ucoeff_eq2.data(), &Mdim, &INFO);
         for(int i = 0; i < Mdim; i++)
         {
-            double diag0 = MassMatFactored[i][i];
-            double diag1 = MassMatFactored[i][i];
-            double diag2 = MassMatFactored[i][i];
+            // Diagonal access with flat indexing: MassMatFactored[i * Mdim + i]
+            double diag = MassMatFactored[i * Mdim + i];
             
             // Safety check for zero diagonal
-            if(std::abs(diag0) < 1e-15 || std::abs(diag1) < 1e-15 || std::abs(diag2) < 1e-15)
+            if(std::abs(diag) < 1e-15)
             {
                 std::cerr << "ERROR: Zero or near-zero diagonal in mass matrix at index " << i << std::endl;
-                std::cerr << "diag0=" << diag0 << ", diag1=" << diag1 << ", diag2=" << diag2 << std::endl;
+                std::cerr << "diag=" << diag << std::endl;
                 exit(1);
             }
             
             // Element-wise division: O(1) per element, O(N) total
-            Ucoeff_eq0[i] = Ucoeff_eq0[i] / diag0;
-            Ucoeff_eq1[i] = Ucoeff_eq1[i] / diag1;
-            Ucoeff_eq2[i] = Ucoeff_eq2[i] / diag2;
+            Ucoeff_eq0[i] = Ucoeff_eq0[i] / diag;
+            Ucoeff_eq1[i] = Ucoeff_eq1[i] / diag;
+            Ucoeff_eq2[i] = Ucoeff_eq2[i] / diag;
         }
     }
     else
     {
-        // Full LU factorization for modal or non-GLL nodal: O(N³)
-        //dgetrf_(&Mdim, &Mdim, MassMatFactored[0], &Mdim, ipiv, &INFO);
-        // dgetrf_(&Mdim, &Mdim, MassMatGlobal1[0], &Mdim, ipiv, &INFO);
-        // dgetrf_(&Mdim, &Mdim, MassMatGlobal2[0], &Mdim, ipiv, &INFO);
-
-        dgetrs_(&TRANS, &Mdim, &NRHS, MassMatFactored[0], &Mdim, ipiv, Ucoeff_eq0.data(), &Mdim, &INFO);
-        dgetrs_(&TRANS, &Mdim, &NRHS, MassMatFactored[0], &Mdim, ipiv, Ucoeff_eq1.data(), &Mdim, &INFO);
-        dgetrs_(&TRANS, &Mdim, &NRHS, MassMatFactored[0], &Mdim, ipiv, Ucoeff_eq2.data(), &Mdim, &INFO);
+        // Full LU solve for modal or non-GL nodal: O(N²) per solve
+        dgetrs_(&TRANS, &Mdim, &NRHS, MassMatFactored.data(), &Mdim, ipiv.data(), Ucoeff_eq0.data(), &Mdim, &INFO);
+        dgetrs_(&TRANS, &Mdim, &NRHS, MassMatFactored.data(), &Mdim, ipiv.data(), Ucoeff_eq1.data(), &Mdim, &INFO);
+        dgetrs_(&TRANS, &Mdim, &NRHS, MassMatFactored.data(), &Mdim, ipiv.data(), Ucoeff_eq2.data(), &Mdim, &INFO);
     }
     // Transform back onto quadrature points.
     std::vector<double> R_DG_row0(Nel*nq,0.0);
@@ -1231,427 +1153,6 @@ void CalculateRHSWeakDGEuler(int t, BasisPoly* bkeynew, Basis* bkey, int np, int
 }
 
 
-
-
-
-void CalculateRHSStrongDGEuler(int t, Basis* bkey, int np, int nq, int Nel, int P, std::vector<double> zquad, std::vector<double> wquad, std::vector<double> z, double **D, double *Jac, int **map, std::vector<std::vector<double> > bc, std::vector<double> X_DG, std::vector<std::vector<double> > U_DG, std::vector<std::vector<double> > &R_DG, double dt, std::vector<std::vector<double> > basis)
-{
-    unsigned char TRANS = 'T';
-    int NRHS=1,INFO,*ipiv,ONE_INT=1;
-    double ZERO_DOUBLE=0.0,ONE_DOUBLE=1.0;
-
-    // np = basis[0].size();
-    //std::cout << " nq = " << nq << " np = " << np << std::endl;
-    int Mdim                        = (P+1)*Nel;
-    std::vector<std::vector<double> > F_DG(3);
-    ipiv                            = ivector(Mdim);
-
-    std::vector<double> F_DG_row0(Nel*nq,0.0);
-    std::vector<double> F_DG_row1(Nel*nq,0.0);
-    std::vector<double> F_DG_row2(Nel*nq,0.0);
-
-    std::vector<std::vector<double> > Dmat = bkey->GetD();
-    std::vector<std::vector<double> > Bmat = bkey->GetB();
-
-
-    double gammaMone = 1.4-1.0;
-    for(int eln=0;eln<Nel;eln++)
-    {
-        for(int i=0;i<nq;i++)
-        {
-
-            double rho  = U_DG[0][i + eln*nq];
-            double rhou = U_DG[1][i + eln*nq];
-            double E    = U_DG[2][i + eln*nq];
-            double u    = rhou/rho;
-            double p    = (E-0.5*rho*u*u)*gammaMone;
-            // Evaluate the flux at each quadrature point.
-            F_DG_row0[i + eln*nq] = rho*u;
-            F_DG_row1[i + eln*nq] = p+rho*u*u;
-            F_DG_row2[i + eln*nq] = (E+p)*u;
-
-        }
-    }
-
-    F_DG[0] = F_DG_row0;
-    F_DG[1] = F_DG_row1;
-    F_DG[2] = F_DG_row2;
-    // Transform fluxes forward into coefficient space.
-    //==========================================================
-    
-    std::vector<std::vector<double> > F_DG_coeff(3);
-    std::vector<double> quad_eq0(nq,0.0);
-    std::vector<double> quad_eq1(nq,0.0);
-    std::vector<double> quad_eq2(nq,0.0);
-    std::vector<double> dx(Nel);
-
-    std::vector<double> Fcoeff_eq0(Nel*(P+1),0.0);
-    std::vector<double> Fcoeff_eq1(Nel*(P+1),0.0);
-    std::vector<double> Fcoeff_eq2(Nel*(P+1),0.0);
-    for(int eln=0;eln<Nel;eln++)
-    {
-        double J = Jac[eln];
-
-        double xstart = X_DG[eln*nq];
-        double xend   = X_DG[eln*nq+nq-1];
-
-        dx[eln] = xend-xstart; 
-        //std::cout << eln << " " << dx[eln] << std::endl;
-        for(int i = 0;i < nq;i++)
-        {
-            quad_eq0[i] = F_DG[0][i+eln*nq];
-            quad_eq1[i] = F_DG[1][i+eln*nq];
-            quad_eq2[i] = F_DG[2][i+eln*nq];
-        }
-
-        
-        std::vector<double> coeff_eq0 = ForwardTransform(P, Bmat, wquad, nq, J, quad_eq0);
-        std::vector<double> coeff_eq1 = ForwardTransform(P, Bmat, wquad, nq, J, quad_eq1);
-        std::vector<double> coeff_eq2 = ForwardTransform(P, Bmat, wquad, nq, J, quad_eq2);
-
-
-        for(int i = 0;i < (P+1);i++)
-        {
-            Fcoeff_eq0[i+eln*(P+1)] = coeff_eq0[i];
-            Fcoeff_eq1[i+eln*(P+1)] = coeff_eq1[i];
-            Fcoeff_eq2[i+eln*(P+1)] = coeff_eq2[i];
-
-            //std::cout << Fcoeff_eq0[i+eln*(P+1)]  << " " << Fcoeff_eq1[i+eln*(P+1)]  << " " << Fcoeff_eq2[i+eln*(P+1)]  << std::endl;
-        }
-        //std::cout << std::endl;
-    }
-
-    F_DG_coeff[0] = Fcoeff_eq0;
-    F_DG_coeff[1] = Fcoeff_eq1;
-    F_DG_coeff[2] = Fcoeff_eq2;
-   
-
-    std::map<int,std::vector<std::vector<double> > > Umap_v;
-    GetAllFwdBwdMapVec(Nel, nq, U_DG, Umap_v, 3);
-    
-    int normalL =  -1;
-    int normalR =   1;
-
-    std::map<int,std::vector<std::vector<double> > > Fmap_v;
-    std::map<int,std::vector<std::vector<double> > >::iterator itmv;
-    //============================================================
-    for(itmv=Umap_v.begin();itmv!=Umap_v.end();itmv++)
-    {
-        int nvar = 3;
-        int elid = itmv->first;
-        double J = Jac[elid];
-        std::vector<double> uLFwd(nvar,0.0);
-        std::vector<double> uLBwd(nvar,0.0);
-        std::vector<double> FLFwd(nvar,0.0);
-        std::vector<double> FLBwd(nvar,0.0);
-
-        std::vector<double> uRFwd(nvar,0.0);
-        std::vector<double> uRBwd(nvar,0.0);
-        std::vector<double> FRFwd(nvar,0.0);
-        std::vector<double> FRBwd(nvar,0.0);
-
-        // for(int n=0;n<nvar;n++)
-        // {
-            if(elid == 0)
-            {
-                uLFwd[0] = Umap_v[elid][0][0];
-                uLFwd[1] = Umap_v[elid][1][0];
-                uLFwd[2] = Umap_v[elid][2][0];
-
-                
-                double rhoFwd  =  uLFwd[0];
-                double rhouFwd =  uLFwd[1];
-                double EFwd    =  uLFwd[2];
-                double pFwd    =  (EFwd-0.5*rhouFwd*rhouFwd/rhoFwd)*gammaMone;
-
-                double rhoBwd  =  2.0*bc[0][0]-rhoFwd;
-                double rhouBwd =  2.0*bc[0][1]-rhouFwd;//-rhouFwd;
-                double pBwd    =  (2.0*bc[0][2]*gammaMone)-pFwd;
-                double EBwd    =  pBwd/(gammaMone)+0.5*rhouBwd*rhouBwd/rhoBwd;
-
-                // std::cout << "bcs 0 left " << bc[0][0] << " " << rhoFwd << " " << rhoBwd << std::endl; 
-                // std::cout << "bcs 1 left " << bc[0][1] << " " << rhouFwd << " " << rhouBwd << std::endl; 
-                // std::cout << "bcs 2 left " << bc[0][2] << " " << EFwd << " " << EBwd << std::endl; 
-
-                uLBwd[0] =  rhoBwd;
-                uLBwd[1] =  rhouBwd;
-                uLBwd[2] =  EBwd;
-                
-                uRFwd[0] = Umap_v[elid][0][1];
-                uRFwd[1] = Umap_v[elid][1][1];
-                uRFwd[2] = Umap_v[elid][2][1];
-
-                uRBwd[0] = Umap_v[elid+1][0][0];  
-                uRBwd[1] = Umap_v[elid+1][1][0];  
-                uRBwd[2] = Umap_v[elid+1][2][0];  
-
-            }
-            else if(elid == Nel-1)
-            {
-                uLFwd[0] = Umap_v[elid][0][0];
-                uLFwd[1] = Umap_v[elid][1][0];
-                uLFwd[2] = Umap_v[elid][2][0];
-
-                uLBwd[0] = Umap_v[elid-1][0][1];
-                uLBwd[1] = Umap_v[elid-1][1][1];
-                uLBwd[2] = Umap_v[elid-1][2][1];
-
-                uRFwd[0] = Umap_v[elid][0][1];
-                uRFwd[1] = Umap_v[elid][1][1];
-                uRFwd[2] = Umap_v[elid][2][1];
-
-                //uRBwd[n] = Umap_v[0][n][0];
-                // uRBwd[n] = 2.0*bc[1][n]-uRFwd[n];
-
-                double rhoFwd  =  uRFwd[0];
-                double rhouFwd =  uRFwd[1];
-                double EFwd    =  uRFwd[2];
-                double pFwd    =  (EFwd-0.5*rhouFwd*rhouFwd/rhoFwd)*gammaMone;
-
-
-                double rhoBwd  =   2.0*bc[1][0]-rhoFwd;
-                double rhouBwd =   2.0*bc[1][1]-rhouFwd;//-rhouFwd;
-                double pBwd    =   (2.0*bc[1][2]*gammaMone)-pFwd;
-                double EBwd    =  pBwd/(gammaMone)+0.5*rhouBwd*rhouBwd/rhoBwd;
-
-                // std::cout << "bcs 0 right " << bc[1][0] << " " << rhoFwd << " " << rhoBwd << std::endl; 
-                // std::cout << "bcs 1 right " << bc[1][1] << " " << rhouFwd << " " << rhouBwd << std::endl; 
-                // std::cout << "bcs 2 right " << bc[1][2] << " " << EFwd << " " << EBwd << std::endl; 
-
-                uRBwd[0] = rhoBwd; 
-                uRBwd[1] = rhouBwd;
-                uRBwd[2] = EBwd;
-            }
-            else
-            {
-                uLFwd[0] = Umap_v[elid][0][0];
-                uLFwd[1] = Umap_v[elid][1][0];
-                uLFwd[2] = Umap_v[elid][2][0];
-                
-                uLBwd[0] = Umap_v[elid-1][0][1];
-                uLBwd[1] = Umap_v[elid-1][1][1];
-                uLBwd[2] = Umap_v[elid-1][2][1];
-
-                uRFwd[0] = Umap_v[elid][0][1];
-                uRFwd[1] = Umap_v[elid][1][1];
-                uRFwd[2] = Umap_v[elid][2][1];
-                
-                uRBwd[0] = Umap_v[elid+1][0][0];
-                uRBwd[1] = Umap_v[elid+1][1][0];
-                uRBwd[2] = Umap_v[elid+1][2][0];
-            }
-       // }
-
-        
-        double rhoLFwd  = uLFwd[0];
-        double rhouLFwd = uLFwd[1];
-        double ELFwd    = uLFwd[2];
-        double uLFwd_s    = rhouLFwd/rhoLFwd;
-        double pLFwd    = (ELFwd-0.5*rhoLFwd*uLFwd_s*uLFwd_s)*gammaMone;
-        // Evaluate the flux at each quadrature point.
-
-        FLFwd[0] = rhouLFwd;
-        FLFwd[1] = pLFwd+rhoLFwd*uLFwd_s*uLFwd_s;
-        FLFwd[2] = (ELFwd+pLFwd)*uLFwd_s;
-
-        double rhoRFwd  = uRFwd[0];
-        double rhouRFwd = uRFwd[1];
-        double ERFwd    = uRFwd[2];
-        double uRFwd_s  = rhouRFwd/rhoRFwd;
-        double pRFwd    = (ERFwd-0.5*rhoRFwd*uRFwd_s*uRFwd_s)*gammaMone;
-        // Evaluate the flux at each quadrature point.
-
-        FRFwd[0] = rhouRFwd;
-        FRFwd[1] = pRFwd+rhoRFwd*uRFwd_s*uRFwd_s;
-        FRFwd[2] = (ERFwd+pRFwd)*uRFwd_s;
-
-
-        double rhoLBwd  = uLBwd[0];
-        double rhouLBwd = uLBwd[1];
-        double ELBwd    = uLBwd[2];
-        double uLBwd_s  = rhouLBwd/rhoLBwd;
-        double pLBwd    = (ELBwd-0.5*rhoLBwd*uLBwd_s*uLBwd_s)*gammaMone;
-        // Evaluate the flux at each quadrature point.
-
-        FLBwd[0] = rhouLBwd;
-        FLBwd[1] = pLBwd+rhoLBwd*uLBwd_s*uLBwd_s;
-        FLBwd[2] = (ELBwd+pLBwd)*uLBwd_s;
-
-        
-        double rhoRBwd  = uRBwd[0];
-        double rhouRBwd = uRBwd[1];
-        double ERBwd    = uRBwd[2];
-        double uRBwd_s  = rhouRBwd/rhoRBwd;
-        double pRBwd    = (ERBwd-0.5*rhoRBwd*uRBwd_s*uRBwd_s)*gammaMone;
-        // Evaluate the flux at each quadrature point.
-
-        FRBwd[0] = rhouRBwd;
-        FRBwd[1] = pRBwd+rhoRBwd*uRBwd_s*uRBwd_s;
-        FRBwd[2] = (ERBwd+pRBwd)*uRBwd_s;
-        
-
-        //std::cout << uLBwd_s << " " << uRBwd_s <<  " "  << uLFwd_s << " " << uRFwd_s << std::endl;
-
-        
-        std::vector<double> Fl = LaxFriedrichsRiemannVec(t, uLBwd,uLFwd,1.0,elid);
-        std::vector<double> Fr = LaxFriedrichsRiemannVec(t, uRFwd,uRBwd,1.0,elid);
-
-        // std::vector<double> Fl = RoeRiemannVec(uLBwd,uLFwd,1.0);
-        // std::vector<double> Fr = RoeRiemannVec(uRFwd,uRBwd,1.0);
-
-        std::vector<double> Fleft(nvar,0.0);
-        std::vector<double> Fright(nvar,0.0);
-
-        for(int n=0;n<nvar;n++)
-        {
-            // Fleft[n]  = normalL*(-Fl[n]+FLBwd[n]);
-            // Fright[n] = normalR*(-Fr[n]+FRBwd[n]);
-            Fleft[n]  = (-Fl[n]+FLFwd[n]);
-            Fright[n] = (-Fr[n]+FRFwd[n]);
-
-            // std::cout << Fleft[n] << " " << Fright[n] << std::endl;
-
-            // Fleft[n]  = ((FLFwd[n]+FLBwd[n])*0.5);
-            // Fright[n] = ((FRFwd[n]+FRBwd[n])*0.5);
-
-            // Fleft[n]  = (FLBwd[n]);
-            // Fright[n] = (FRBwd[n]);
-           
-            // std::cout << "Fleft["<<n<<"] "  << Fl[n] << " " << Fr[n] << std::endl; 
-        }
-
-        Fmap_v[elid].push_back(Fleft);
-        Fmap_v[elid].push_back(Fright);
-    }
-
-
-    std::vector<double> numcoeff_eq0(Mdim,0.0);
-    std::vector<double> numcoeff_eq1(Mdim,0.0);
-    std::vector<double> numcoeff_eq2(Mdim,0.0);
-
-    for(int i = 0;i < Nel;i++)
-    {
-        
-        if(i == 0)
-        {   
-            numcoeff_eq0[0]                 =       -Fmap_v[i][0][0];
-            numcoeff_eq0[P]                 =        Fmap_v[i][1][0];
-
-            numcoeff_eq1[0]                 =       -Fmap_v[i][0][1];
-            numcoeff_eq1[P]                 =        Fmap_v[i][1][1];
-
-            numcoeff_eq2[0]                 =       -Fmap_v[i][0][2];
-            numcoeff_eq2[P]                 =        Fmap_v[i][1][2];
-        }
-        else if(i == Nel-1)
-        {
-
-            numcoeff_eq0[(Nel-1)*(P+1)]     =       -Fmap_v[i][0][0];
-            numcoeff_eq0[Nel*(P+1)-1  ]     =        Fmap_v[i][1][0];
-
-            numcoeff_eq1[(Nel-1)*(P+1)]     =       -Fmap_v[i][0][1];
-            numcoeff_eq1[Nel*(P+1)-1  ]     =        Fmap_v[i][1][1];
-
-            numcoeff_eq2[(Nel-1)*(P+1)]     =       -Fmap_v[i][0][2];
-            numcoeff_eq2[Nel*(P+1)-1  ]     =        Fmap_v[i][1][2];
-
-
-        }
-        else
-        {
-
-            numcoeff_eq0[i*(P+1)]           =       -Fmap_v[i][0][0];
-            numcoeff_eq0[i*(P+1)+P]         =       Fmap_v[i][1][0];
-
-            numcoeff_eq1[i*(P+1)]           =       -Fmap_v[i][0][1];
-            numcoeff_eq1[i*(P+1)+P]         =       Fmap_v[i][1][1];
-
-            numcoeff_eq2[i*(P+1)]           =       -Fmap_v[i][0][2];
-            numcoeff_eq2[i*(P+1)+P]         =       Fmap_v[i][1][2];
-
-        }        
-    }
-    
-    double **StiffnessMatGlobal     = dmatrix(Mdim);
-    GetGlobalStiffnessMatrixNewBasis(Nel, P, wquad, D, Jac, map, Mdim, bkey, StiffnessMatGlobal);
-    // GetGlobalStiffnessMatrixWeakNew(Nel, P, wquad, D, Jac, map, Mdim, basis, StiffnessMatGlobal);
-    
-    double *tmp0                     = dvector(Mdim);
-    double *tmp1                     = dvector(Mdim);
-    double *tmp2                     = dvector(Mdim);
-
-    dgemv_(&TRANS,&Mdim,&Mdim,&ONE_DOUBLE,StiffnessMatGlobal[0],&Mdim,F_DG_coeff[0].data(),&ONE_INT,&ZERO_DOUBLE,tmp0,&ONE_INT);
-    dgemv_(&TRANS,&Mdim,&Mdim,&ONE_DOUBLE,StiffnessMatGlobal[0],&Mdim,F_DG_coeff[1].data(),&ONE_INT,&ZERO_DOUBLE,tmp1,&ONE_INT);
-    dgemv_(&TRANS,&Mdim,&Mdim,&ONE_DOUBLE,StiffnessMatGlobal[0],&Mdim,F_DG_coeff[2].data(),&ONE_INT,&ZERO_DOUBLE,tmp2,&ONE_INT);
-
-
-    std::vector<double> Ucoeff_eq0(Mdim,0.0);
-    std::vector<double> Ucoeff_eq1(Mdim,0.0);
-    std::vector<double> Ucoeff_eq2(Mdim,0.0);
-    for(int i = 0;i < Mdim; i++)
-    {
-        Ucoeff_eq0[i] = -tmp0[i]+numcoeff_eq0[i];
-        Ucoeff_eq1[i] = -tmp1[i]+numcoeff_eq1[i];
-        Ucoeff_eq2[i] = -tmp2[i]+numcoeff_eq2[i];
-
-        //std::cout << tmp0[i] << " " << tmp1[i] << " " << tmp2[i] << std::endl;
-    }
-    double **MassMatGlobal0          = dmatrix(Mdim);
-    GetGlobalMassMatrixNew(Nel, P, wquad, Jac, map, Mdim, Bmat, MassMatGlobal0);
-
-    double **MassMatGlobal1          = dmatrix(Mdim);
-    GetGlobalMassMatrixNew(Nel, P, wquad, Jac, map, Mdim, Bmat, MassMatGlobal1);
-
-    double **MassMatGlobal2          = dmatrix(Mdim);
-    GetGlobalMassMatrixNew(Nel, P, wquad, Jac, map, Mdim, Bmat, MassMatGlobal2);
-
-    dgetrf_(&Mdim, &Mdim, MassMatGlobal0[0], &Mdim, ipiv, &INFO);
-    dgetrf_(&Mdim, &Mdim, MassMatGlobal1[0], &Mdim, ipiv, &INFO);
-    dgetrf_(&Mdim, &Mdim, MassMatGlobal2[0], &Mdim, ipiv, &INFO);
-
-    dgetrs_(&TRANS, &Mdim, &NRHS, MassMatGlobal0[0], &Mdim, ipiv, Ucoeff_eq0.data(), &Mdim, &INFO);
-    dgetrs_(&TRANS, &Mdim, &NRHS, MassMatGlobal1[0], &Mdim, ipiv, Ucoeff_eq1.data(), &Mdim, &INFO);
-    dgetrs_(&TRANS, &Mdim, &NRHS, MassMatGlobal2[0], &Mdim, ipiv, Ucoeff_eq2.data(), &Mdim, &INFO);
-    
-    // Transform back onto quadrature points.
-    std::vector<double> R_DG_row0(Nel*nq,0.0);
-    std::vector<double> R_DG_row1(Nel*nq,0.0);
-    std::vector<double> R_DG_row2(Nel*nq,0.0);
-
-    std::vector<double> coeff_eq0_tmp(P+1);
-    std::vector<double> coeff_eq1_tmp(P+1);
-    std::vector<double> coeff_eq2_tmp(P+1);
-
-     
-    for(int eln=0;eln<Nel;eln++)
-    {
-        double J = Jac[eln];
-
-        for(int i = 0;i<(P+1);i++)
-        {
-            coeff_eq0_tmp[i]   = Ucoeff_eq0[i+eln*(P+1)];
-            coeff_eq1_tmp[i]   = Ucoeff_eq1[i+eln*(P+1)];
-            coeff_eq2_tmp[i]   = Ucoeff_eq2[i+eln*(P+1)];
-        }
-        
-        std::vector<double> quad_e0 = BackwardTransform(P,  nq,  Bmat,  coeff_eq0_tmp);
-        std::vector<double> quad_e1 = BackwardTransform(P,  nq,  Bmat,  coeff_eq1_tmp);
-        std::vector<double> quad_e2 = BackwardTransform(P,  nq,  Bmat,  coeff_eq2_tmp);
-        int Pf = P - 1;
-
-        for(int i = 0;i < nq;i++)
-        {
-            R_DG_row0[i+nq*eln] = quad_e0[i];
-            R_DG_row1[i+nq*eln] = quad_e1[i];
-            R_DG_row2[i+nq*eln] = quad_e2[i];
-        }
-        R_DG[0] = R_DG_row0;
-        R_DG[1] = R_DG_row1;
-        R_DG[2] = R_DG_row2;
-
-    }
-    
-}
 
 
 
@@ -1860,30 +1361,6 @@ std::vector<double> RoeRiemannVec(std::vector<double> Ul, std::vector<double> Ur
 
 
 
-
-
-
-
-
-
-
-void *negatednormals(int Nel, double *n)
-{
-    
-    for(int i = 0;i < (2.0*Nel);i++)
-    {
-        n[i] = 1.0;
-        
-        if(i>1 && (i % 2 == 0))
-        {
-            n[i] = -1.0;
-            
-        }
-    }
-    return 0;
-}
-
-
 void GetAllFwdBwd(int Nel, int nq, double *bc, double *quad, std::vector<double> &UtL, std::vector<double> &UtR)
 {
     
@@ -1909,309 +1386,35 @@ void GetAllFwdBwd(int Nel, int nq, double *bc, double *quad, std::vector<double>
     }
 }
 
-void GetAllFwdBwdMap(int Nel, int nq, double *quad, std::map<int,std::vector<double> > &Umap)
-{
-    
-    for(int i=0;i<Nel;i++)
-    {
-        std::vector<double> row(2,0.0);
-        if(i == 0)
-        {
-            row[0] = quad[0];
-            row[1] = quad[nq-1];
 
-        }
-        else if(i == Nel)
-        {
-            row[0] = quad[Nel*nq-1]; 
-            row[1] = quad[Nel*nq-1];
-        }
-        else
-        {
-            row[0] = quad[i*nq];
-            row[1] = quad[(i+1)*nq-1];
-        }
-        Umap[i] = row;
-    }
-}
-
-
-void GetAllFwdBwdMapCoeff(int Nel, int P, double *coeff, std::map<int,std::vector<double> > &Umap)
-{
-    
-    for(int i=0;i<Nel;i++)
-    {
-        std::vector<double> row(2,0.0);
-        if(i == 0)
-        {
-            row[0] = coeff[0];
-            row[1] = coeff[P];
-
-        }
-        else if(i == Nel)
-        {
-            row[0] = coeff[(Nel-1)*(P+1)];
-            row[1] = coeff[Nel*(P+1)-1  ];
-        }
-        else
-        {
-            row[0] = coeff[i*(P+1)];
-            row[1] = coeff[i*(P+1)+P];
-        }
-
-        Umap[i] = row;
-    }
-}
-
-
-void GetGlobalStiffnessMatrixNew(int Nel, int P, std::vector<double> wquad, double **D, double *Jac, int **map, int Mdim, std::vector<std::vector<double> > basis, double **StiffnessGlobal)
+void GetGlobalStiffnessMatrixWeakNewBasis(std::vector<std::vector<double> > Bmat, std::vector<std::vector<double> > Dmat, int Nel, int P, std::vector<double> wquad, double **D, double *Jac, std::vector<std::vector<int>> map, int Mdim, std::vector<std::vector<double> > basis, std::vector<double>& StiffnessGlobal)
 {
     double **StiffnessElem = dmatrix(P+1);
-    // Construct global Mass matrix.
-    for(int i=0;i<Mdim;i++)
-    {
-        for(int j=0;j<Mdim;j++){
-            StiffnessGlobal[i][j] = 0;
-        }
-    }
+    // Construct global stiffness matrix.
+    // Initialize to zero (already done if vector was constructed with zeros)
+    std::fill(StiffnessGlobal.begin(), StiffnessGlobal.end(), 0.0);
     
     for(int eln=0;eln<Nel;eln++)
     {
-        // Determine elemental mass matrix;
-        GetElementStiffnessMatrixNew(P, wquad, D, Jac[eln], basis, StiffnessElem);
-        //std::cout << std::endl;
-        for(int a=0;a<P+1;a++)
-        {
-            for(int b=0;b<P+1;b++)
-            {
-                // Assemble the global mass matrix;
-                StiffnessGlobal[map[eln][a]][map[eln][b]] = StiffnessGlobal[map[eln][a]][map[eln][b]] + StiffnessElem[a][b];
-            }
-        }   
-    }
-
-    // std::cout << std::endl;
-    // for(int i=0;i<Mdim;i++)
-    // {
-    //     for(int j=0;j<Mdim;j++)
-    //     {
-    //         std::cout << StiffnessGlobal[i][j] << " ";
-    //     }
-    //     std::cout << std::endl;
-    // }
-    // std::cout << std::endl;
-
-}
-
-
-
-
-
-void GetGlobalStiffnessMatrixNewBasis(int Nel, int P, std::vector<double> wquad, double **D, double *Jac, int **map, int Mdim, Basis* bkey, double **StiffnessGlobal)
-{
-    double **StiffnessElem = dmatrix(P+1);
-    // Construct global Mass matrix.
-    for(int i=0;i<Mdim;i++)
-    {
-        for(int j=0;j<Mdim;j++){
-            StiffnessGlobal[i][j] = 0;
-        }
-    }
-    
-    for(int eln=0;eln<Nel;eln++)
-    {
-        // Determine elemental mass matrix;
-        // GetElementStiffnessMatrixNew(P, wquad, D, Jac[eln], basis, StiffnessElem);
-
-        GetElementStiffnessMatrixNewBasis(P, wquad, D, Jac[eln], bkey, StiffnessElem);
-
-        //std::cout << std::endl;
-        for(int a=0;a<P+1;a++)
-        {
-            for(int b=0;b<P+1;b++)
-            {
-                // Assemble the global mass matrix;
-                StiffnessGlobal[map[eln][a]][map[eln][b]] = StiffnessGlobal[map[eln][a]][map[eln][b]] + StiffnessElem[a][b];
-            }
-        }   
-    }
-
-    // std::cout << std::endl;
-    // for(int i=0;i<Mdim;i++)
-    // {
-    //     for(int j=0;j<Mdim;j++)
-    //     {
-    //         std::cout << StiffnessGlobal[i][j] << " ";
-    //     }
-    //     std::cout << std::endl;
-    // }
-    // std::cout << std::endl;
-
-}
-
-
-
-
-
-void GetGlobalStiffnessMatrixWeakNew(int Nel, int P, std::vector<double> wquad, double **D, double *Jac, int **map, int Mdim, std::vector<std::vector<double> > basis, double **StiffnessGlobal)
-{
-    double **StiffnessElem = dmatrix(P+1);
-    // Construct global Mass matrix.
-    for(int i=0;i<Mdim;i++)
-    {
-        for(int j=0;j<Mdim;j++){
-            StiffnessGlobal[i][j] = 0;
-        }
-    }
-    
-    for(int eln=0;eln<Nel;eln++)
-    {
-        // Determine elemental mass matrix;
-        GetElementStiffnessMatrixWeakNew(P, wquad, D, Jac[eln], basis, StiffnessElem);
-        //std::cout << std::endl;
-        for(int a=0;a<P+1;a++)
-        {
-            for(int b=0;b<P+1;b++)
-            {
-                // Assemble the global mass matrix;
-                StiffnessGlobal[map[eln][a]][map[eln][b]] = StiffnessGlobal[map[eln][a]][map[eln][b]] + StiffnessElem[a][b];
-            }
-        }   
-    }
-
-    // std::cout << std::endl;
-    // for(int i=0;i<Mdim;i++)
-    // {
-    //     for(int j=0;j<Mdim;j++)
-    //     {
-    //         std::cout << StiffnessGlobal[i][j] << " ";
-    //     }
-    //     std::cout << std::endl;
-    // }
-    // std::cout << std::endl;
-
-}
-
-
-
-
-
-void GetGlobalStiffnessMatrixWeakNewBasis(std::vector<std::vector<double> > Bmat, std::vector<std::vector<double> > Dmat, int Nel, int P, std::vector<double> wquad, double **D, double *Jac, int **map, int Mdim, std::vector<std::vector<double> > basis, double **StiffnessGlobal)
-{
-    double **StiffnessElem = dmatrix(P+1);
-    // Construct global Mass matrix.
-    for(int i=0;i<Mdim;i++)
-    {
-        for(int j=0;j<Mdim;j++){
-            StiffnessGlobal[i][j] = 0;
-        }
-    }
-    
-    for(int eln=0;eln<Nel;eln++)
-    {
-        // Determine elemental mass matrix;
+        // Determine elemental stiffness matrix;
         GetElementStiffnessMatrixWeakNewBasis(P, wquad, D, Jac[eln], Bmat, Dmat, StiffnessElem);
 
-
         for(int a=0;a<P+1;a++)
         {
             for(int b=0;b<P+1;b++)
             {
-                // Assemble the global mass matrix;
-                StiffnessGlobal[map[eln][a]][map[eln][b]] = StiffnessGlobal[map[eln][a]][map[eln][b]] + StiffnessElem[a][b];
+                // Assemble the global stiffness matrix using flat indexing
+                int row = map[eln][a];
+                int col = map[eln][b];
+                StiffnessGlobal[row * Mdim + col] += StiffnessElem[a][b];
             }
         }   
     }
-
-    // std::cout << std::endl;
-    // for(int i=0;i<Mdim;i++)
-    // {
-    //     for(int j=0;j<Mdim;j++)
-    //     {
-    //         std::cout << StiffnessGlobal[i][j] << " ";
-    //     }
-    //     std::cout << std::endl;
-    // }
-    // std::cout << std::endl;
-
 }
 
 
-/*
-void GetGlobalStiffnessMatrix(int Nel, int P, int np, int nq, std::vector<double> zquad, std::vector<double> wquad, std::vector<double> z, double **D, double *Jac, int **map, int Mdim, double **StiffnessGlobal)
-{
-    double **StiffnessElem = dmatrix(P+1);
-    // Construct global Mass matrix.
-    for(int i=0;i<Mdim;i++)
-    {
-        for(int j=0;j<Mdim;j++){
-            StiffnessGlobal[i][j] = 0;
-        }
-    }
-    std::vector<std::vector<double> > basis = getNodalBasis(zquad, nq, np, P);
-    
-    for(int eln=0;eln<Nel;eln++)
-    {
-        // Determine elemental mass matrix;
-        GetElementStiffnessMatrixNew(P, wquad, D, Jac[eln], basis, StiffnessElem);
-        //std::cout << std::endl;
-        for(int a=0;a<P+1;a++)
-        {
-            for(int b=0;b<P+1;b++)
-            {
-                // Assemble the global mass matrix;
-                StiffnessGlobal[map[eln][a]][map[eln][b]] = StiffnessGlobal[map[eln][a]][map[eln][b]] + StiffnessElem[a][b];
-            }
-        }   
-    }
 
-    // std::cout << std::endl;
-    // for(int i=0;i<Mdim;i++)
-    // {
-    //     for(int j=0;j<Mdim;j++)
-    //     {
-    //         std::cout << StiffnessGlobal[i][j] << " ";
-    //     }
-    //     std::cout << std::endl;
-    // }
-    // std::cout << std::endl;
 
-}
-*/
-
-void GetAllFwdBwdMapVecNodal(int Nel, int nq, std::vector<std::vector<double> > quad, std::map<int,std::vector<std::vector<double> > > &Umap, int nvar)
-{
-    
-    for(int i=0;i<Nel;i++)
-    {
-        std::vector<std::vector<double> > rowrow(nvar);
-        for(int n=0;n<nvar;n++)
-        {
-            std::vector<double> row(2,0.0);
-
-            if(i == 0)
-            {
-                row[0] = quad[n][0];
-                row[1] = quad[n][nq-1];
-            }
-            else if(i == Nel)
-            {
-                row[0] = quad[n][(Nel-1)*nq-1]; 
-                row[1] = quad[n][Nel*nq-1];
-            }
-            else
-            {
-                row[0] = quad[n][i*nq];
-                row[1] = quad[n][(i+1)*nq-1];
-            }
-
-            rowrow[n] = row;
-        }
-
-        Umap[i] = rowrow;
-
-    }
-}
 
 void GetAllFwdBwdMapVec(int Nel, int nq, std::vector<std::vector<double> > quad, std::map<int,std::vector<std::vector<double> > > &Umap, int nvar)
 {
@@ -2247,113 +1450,6 @@ void GetAllFwdBwdMapVec(int Nel, int nq, std::vector<std::vector<double> > quad,
     }
 }
 
-
-
-
-
-
-
-void GetElementStiffnessMatrixNew(int P, std::vector<double> wquad, double **D, double J, std::vector<std::vector<double> > basis, double **StiffMatElem)
-{
-    for(int i=0;i<P+1;i++)
-    {
-        for(int j=0;j<P+1;j++){
-            StiffMatElem[i][j] = 0;
-        }
-    }
-    
-    // double *phi1  = dvector(np);
-    // double *dphi1 = dvector(np);
-    // double *phi2  = dvector(np);
-    int np = basis[0].size();
-    double *dphi2 = dvector(np);
-
-    //std::cout << "Stiffness Matrix " << std::endl;
-    for(int i=0;i<P+1;i++)
-    {
-        //std::vector<double> phi1 = getLagrangeBasisFunction(i,zquad,nq,z,np,P);
-        std::vector<double> phi1 = basis[i];
-        for(int j=0;j<P+1;j++)
-        {
-            // std::vector<double> phi2 = getLagrangeBasisFunction(j,zquad,nq,z,np,P);
-            std::vector<double> phi2 = basis[j];
-            //lagrange_basis(np, P, j, z, phi2);
-            diff( np, D, phi2.data(), dphi2, J);
-            
-            StiffMatElem[i][j] = J*integr(np, wquad.data(), phi1.data(), dphi2);
-        }
-    }
-}
-
-
-
-
-void GetElementStiffnessMatrixNewBasis(int P, std::vector<double> wquad, double **D, double J, Basis* bkey, double **StiffMatElem)
-{
-    for(int i=0;i<P+1;i++)
-    {
-        for(int j=0;j<P+1;j++){
-            StiffMatElem[i][j] = 0;
-        }
-    }
-
-    std::vector<std::vector<double> > basis_update        = bkey->GetB();
-    std::vector<std::vector<double> > basis_diff_update   = bkey->GetD();
-
-    int nq = basis_update[0].size();
-
-    for(int i=0;i<P+1;i++)
-    {   
-        std::vector<double> phi1 = basis_update[i];
-        std::vector<double> dphi1 = basis_diff_update[i];
-        for(int j=0;j<P+1;j++)
-        {
-            std::vector<double> phi2 = basis_update[j];
-            std::vector<double> dphi2 = basis_diff_update[j];
-            StiffMatElem[i][j] = J*integr(nq, wquad.data(), phi1.data(), dphi2.data());
-            // StiffMatElem[i][j] = J*integr(nq, wquad.data(), basis_diff_update[i].data(), basis_update[j].data());
-        }
-    }
-}
-
-
-
-void GetElementStiffnessMatrixWeakNew(int P, std::vector<double> wquad, double **D, double J, std::vector<std::vector<double> > basis, double **StiffMatElem)
-{
-    for(int i=0;i<P+1;i++)
-    {
-        for(int j=0;j<P+1;j++){
-            StiffMatElem[i][j] = 0;
-        }
-    }
-    
-    // double *phi1  = dvector(np);
-    // double *dphi1 = dvector(np);
-    // double *phi2  = dvector(np);
-    int np = basis[0].size();
-    double *dphi1 = dvector(np);
-    double *dphi2 = dvector(np);
-    //std::cout << "Stiffness Matrix " << std::endl;
-    for(int i=0;i<P+1;i++)
-    {
-        //std::vector<double> phi1 = getLagrangeBasisFunction(i,zquad,nq,z,np,P);
-        std::vector<double> phi1 = basis[i];
-        diff( np, D, phi1.data(), dphi1, J);
-
-        for(int j=0;j<P+1;j++)
-        {
-            // std::vector<double> phi2 = getLagrangeBasisFunction(j,zquad,nq,z,np,P);
-            std::vector<double> phi2 = basis[j];
-            diff( np, D, phi2.data(), dphi2, J);
-            //lagrange_basis(np, P, j, z, phi2);
-            // diff( np, D, phi2.data(), dphi2, J);
-            
-            //StiffMatElem[i][j] = J*integr(np, wquad.data(), phi2.data(), dphi1);
-            StiffMatElem[i][j] = J*integr(np, wquad.data(), dphi1, phi2.data());
-
-        }
-    }
-}
 
 
 
@@ -2448,31 +1544,24 @@ void GetElementStiffnessMatrixWeakNewBasis(int P,
 
 
 
-void GetGlobalMassMatrixNew(int Nel, int P, std::vector<double> wquad, double *Jac, int **map, int Mdim, std::vector<std::vector<double> > basis, double **MassMatGlobal)
+void GetGlobalMassMatrixNew(int Nel, int P, std::vector<double> wquad, double *Jac, std::vector<std::vector<int>> map, int Mdim, std::vector<std::vector<double> > basis, std::vector<double>& MassMatGlobal)
 {
-    // double **MassMatElem = dmatrix(P+1);
     // Construct global Mass matrix.
-
-    for(int i=0;i<Mdim;i++)
-    {
-        for(int j=0;j<Mdim;j++){
-            MassMatGlobal[i][j] = 0;
-        }
-    }
+    // Initialize to zero
+    std::fill(MassMatGlobal.begin(), MassMatGlobal.end(), 0.0);
     
     for(int eln=0;eln<Nel;eln++)
     {
         double J = Jac[eln];
-        // Determine elemental mass matrix;
-        // GetElementMassMatrix_Lagrange(np, P, z, w, Jac[eln], MassMatElem);
-        //std::vector<double> MassMatElem = GetElementMassMatrix_Lagrange(P,zquad,np,zquad,wquad,nq,J);
         std::vector<double> MassMatElem = GetElementMassMatrix(P, basis, wquad, J);
         for(int a=0;a<P+1;a++)
         {
             for(int b=0;b<P+1;b++)
             {
-                // Assemble the global mass matrix;
-                MassMatGlobal[map[eln][a]][map[eln][b]] = MassMatGlobal[map[eln][a]][map[eln][b]] + MassMatElem[a*(P+1)+b];//MassMatElem[a][b];
+                // Assemble the global mass matrix using flat indexing
+                int row = map[eln][a];
+                int col = map[eln][b];
+                MassMatGlobal[row * Mdim + col] += MassMatElem[a*(P+1)+b];
             }
         }
     }
@@ -2489,38 +1578,6 @@ void GetGlobalMassMatrixNew(int Nel, int P, std::vector<double> wquad, double *J
 
 
 
-// This member function allocates memory and sets up for a double vector.
-double *dvector(int n)
-{
-  double *v;
-
-  v = (double *)malloc(n*sizeof(double));
-  return v;
-}
-
-// This member function allocates memory and sets up for a integer vector.
-int *ivector(int n)
-{
-  int *v;
-  
-  v = (int *)malloc(n*sizeof(int));
-  return v;
-}
-
-// This member function allocates memory and sets up for a integer matrix.
-int **imatrix(int nrow, int ncol)
-{
-    int **A;
-    
-    A = (int **)malloc(nrow*sizeof(int *));
-    A[0] = (int *)malloc(nrow*ncol*sizeof(int));
-    
-    for(int i=1;i<nrow;i++){
-        A[i] = A[i-1]+ncol;
-    }
-    return A;
-}
-
 // This member function allocates memory and sets up for a double matrix.
 // double **dmatrix(int n)
 // {
@@ -2535,29 +1592,7 @@ int **imatrix(int nrow, int ncol)
 // }
 
 // This member function allocates memory and sets up for a double array.
-double **darray(int n,int m)
-{
-    double **A;
-    A = (double **)malloc(n*sizeof(double *));
-    A[0] = (double *)malloc(n*m*sizeof(double));
-    
-    for(int i=1;i<n;i++){
-        A[i] = A[i-1]+m;
-    }
-    return A;
-}
 
-int **iarray(int n,int m)
-{
-    int **A;
-    A = (int **)malloc(n*sizeof(int *));
-    A[0] = (int *)malloc(n*m*sizeof(int));
-    
-    for(int i=1;i<n;i++){
-        A[i] = A[i-1]+m;
-    }
-    return A;
-}
 
 
 
@@ -2625,52 +1660,17 @@ void *chi(int np, int eln, double *x, double *z, double *Jac, double *bound)
   return 0;
 }
 
-// This member function determines the mapping.
-void *mapping(int Nel, int P, int **map)
-{
-    for(int e=0;e<Nel;e++)
-    {
-        for(int p=0;p<P+1;p++)
-        {
+// In mapping function
+void mapping(int Nel, int P, std::vector<std::vector<int>>& map) {
+    for(int e = 0; e < Nel; e++) {
+        for(int p = 0; p < P+1; p++) {
             map[e][p] = p + (e*(P+1));
         }
     }
-
-    return 0;
-}
-
-
-// This member function determines the ith basis function.
-std::vector<double> modal_basis(int np, int P, int i, std::vector<double> z)
-{
-    std::vector<double> phi(np);
-    if(i == 0){
-        for(int k=0;k<np;k++){
-            phi[k] = (1 - z[k])/2;
-        }
-    }else if(i == P){
-        for(int k=0;k<np;k++){
-            phi[k] = (1 + z[k])/2;
-        }
-    }else{
-        jacobfd(np, z.data(), phi.data(), NULL, i-1, 1.0, 1.0);
-        for(int k=0;k<np;k++){
-            phi[k] = ((1-z[k])/2)*((1+z[k])/2)*phi[k];
-        }
-    }
-    return phi;
 }
 
 
 
 
-// This member function evaluates the flux based on the state vector.
-void evaluateflux(int np, double *u_DG, double *Flux_DG)
-{
-    for(int i=0;i<np;i++)
-    {
-        Flux_DG[i]  = 0.5*u_DG[i]*u_DG[i];
-    }
-  
-}
+
 
