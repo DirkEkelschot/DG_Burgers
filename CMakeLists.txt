@@ -26,3 +26,25 @@ target_link_libraries(app ${BLAS_LIBRARIES})
 
 target_link_libraries(app "${TORCH_LIBRARIES}")
 set_property(TARGET app PROPERTY CXX_STANDARD 17)
+
+# 2D Euler DG Solver (no LibTorch dependency)
+find_package(LAPACK REQUIRED)
+file(GLOB SRC2D CONFIGURE_DEPENDS
+    "src/Polylib.cpp"
+    "src/basis.cpp"
+    "src/basis_poly.cpp"
+    "src/basis_functions.cpp"
+    "src/io.cpp"
+    "src/tinyxml.cpp"
+    "src/tinyxmlerror.cpp"
+    "src/tinyxmlparser.cpp"
+    "src/tinystr.cpp"
+    "src/mesh2d.cpp"
+    "src/geom2d.cpp"
+    "src/euler2d.cpp"
+    "2D-Euler-app.cpp"
+)
+add_executable(app2d ${SRC2D})
+target_include_directories(app2d PRIVATE "${DEFAULT_BLAS_ROOT}/include")
+target_link_libraries(app2d ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES})
+set_property(TARGET app2d PROPERTY CXX_STANDARD 17)

@@ -175,3 +175,68 @@ Inputs* ReadXmlFile(const char* filename)
 
     return inp;
 }
+
+
+Inputs2D* ReadXmlFile2D(const char* filename)
+{
+    TiXmlDocument doc(filename);
+    if (!doc.LoadFile())
+    {
+        std::cout << "Error: cannot load " << filename << std::endl;
+        return nullptr;
+    }
+
+    TiXmlElement* xmlRoot  = doc.FirstChildElement("DGSOLVER");
+    TiXmlElement* xmlParam = xmlRoot->FirstChildElement("PARAMETERS");
+
+    std::map<std::string, std::string> param_map;
+    if (xmlParam)
+    {
+        TiXmlElement* parameter = xmlParam->FirstChildElement("P");
+        while (parameter)
+        {
+            TiXmlNode* node = parameter->FirstChild();
+            std::string line = node->ToText()->Value(), lhs, rhs;
+            try { ParseEquals(line, lhs, rhs); }
+            catch (...) { std::cout << "Error parsing parameter line" << std::endl; }
+
+            if (!lhs.empty() && !rhs.empty())
+                param_map[lhs] = rhs;
+
+            parameter = parameter->NextSiblingElement();
+        }
+    }
+
+    Inputs2D* inp = new Inputs2D;
+
+    if (param_map.count("PolynomialOrder"))  inp->porder     = std::stoi(param_map["PolynomialOrder"]);
+    if (param_map.count("nQuadrature"))      inp->nquad      = std::stoi(param_map["nQuadrature"]);
+    if (param_map.count("dt"))               inp->dt         = std::stod(param_map["dt"]);
+    if (param_map.count("nt"))               inp->nt         = std::stoi(param_map["nt"]);
+    if (param_map.count("CFL"))              inp->CFL        = std::stod(param_map["CFL"]);
+    if (param_map.count("BasisType"))        inp->btype      = param_map["BasisType"];
+    if (param_map.count("PointsType"))       inp->ptype      = param_map["PointsType"];
+    if (param_map.count("TimeScheme"))       inp->timescheme = param_map["TimeScheme"];
+    if (param_map.count("MeshFile"))         inp->meshfile   = param_map["MeshFile"];
+    if (param_map.count("TestCase"))         inp->testcase   = param_map["TestCase"];
+
+    if (inp->nquad == 0)
+        inp->nquad = inp->porder + 1;
+
+    std::cout << "===================================================" << std::endl;
+    std::cout << "============== 2D DG Solver Inputs ================" << std::endl;
+    std::cout << "===================================================" << std::endl;
+    std::cout << "PolynomialOrder = " << inp->porder     << std::endl;
+    std::cout << "nQuadrature     = " << inp->nquad      << std::endl;
+    std::cout << "dt              = " << inp->dt         << std::endl;
+    std::cout << "nt              = " << inp->nt         << std::endl;
+    std::cout << "CFL             = " << inp->CFL        << std::endl;
+    std::cout << "BasisType       = " << inp->btype      << std::endl;
+    std::cout << "PointsType      = " << inp->ptype      << std::endl;
+    std::cout << "TimeScheme      = " << inp->timescheme << std::endl;
+    std::cout << "MeshFile        = " << inp->meshfile   << std::endl;
+    std::cout << "TestCase        = " << inp->testcase   << std::endl;
+    std::cout << "===================================================" << std::endl;
+
+    return inp;
+}
