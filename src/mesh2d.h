@@ -17,9 +17,11 @@ struct Mesh2D {
     int nNodes    = 0;
     int nElements = 0;
     int nFaces    = 0;
+    int geomOrder = 1;
+    int nGeomNodes = 4;
 
     std::vector<std::array<double, 2>> nodes;
-    std::vector<std::array<int, 4>>    elements;
+    std::vector<std::vector<int>>      elements;
     std::vector<Face2D>                faces;
 
     // boundary tag -> list of face indices

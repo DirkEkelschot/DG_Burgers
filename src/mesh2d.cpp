@@ -71,19 +71,35 @@ void Mesh2D::readGmsh(const std::string& filename)
 
                 if (elType == 1)
                 {
-                    // 2-node line element (boundary edge)
                     int n1, n2;
                     iss >> n1 >> n2;
                     n1--; n2--;
                     boundaryEdgeTag[sortedEdge(n1, n2)] = physTag;
                 }
+                else if (elType == 8)
+                {
+                    int n1, n2, n3;
+                    iss >> n1 >> n2 >> n3;
+                    n1--; n2--;
+                    boundaryEdgeTag[sortedEdge(n1, n2)] = physTag;
+                }
                 else if (elType == 3)
                 {
-                    // 4-node quad
                     int n1, n2, n3, n4;
                     iss >> n1 >> n2 >> n3 >> n4;
                     n1--; n2--; n3--; n4--;
                     elements.push_back({n1, n2, n3, n4});
+                    geomOrder = 1;
+                    nGeomNodes = 4;
+                }
+                else if (elType == 10)
+                {
+                    int nd[9];
+                    for (int k = 0; k < 9; ++k) { iss >> nd[k]; nd[k]--; }
+                    elements.push_back({nd[0], nd[1], nd[2], nd[3],
+                                        nd[4], nd[5], nd[6], nd[7], nd[8]});
+                    geomOrder = 2;
+                    nGeomNodes = 9;
                 }
                 else if (elType == 15)
                 {

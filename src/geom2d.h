@@ -33,6 +33,12 @@ struct GeomData2D {
 void bilinearShapeFunctions(double xi, double eta,
                             double N[4], double dNdxi[4], double dNdeta[4]);
 
+// General geometry shape functions for order 1 (4-node) or order 2 (9-node) quads.
+// Nodes follow Gmsh ordering: corners 0-3 CCW, then mid-edge/center nodes.
+// N, dNdxi, dNdeta must have room for nGeomNodes entries.
+void geomShapeFunctions(int geomOrder, double xi, double eta,
+                        double* N, double* dNdxi, double* dNdeta);
+
 // Compute all geometry data for every element and face
 GeomData2D computeGeometry(const Mesh2D& mesh,
                            const std::vector<double>& xiVol,

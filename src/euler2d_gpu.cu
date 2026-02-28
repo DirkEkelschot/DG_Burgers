@@ -15,6 +15,14 @@
 
 static constexpr double GAMMA_GPU = 1.4;
 
+#define MAX_P1   8
+#define MAX_NQ1D 10
+
+__constant__ double c_Bmat[MAX_P1 * MAX_NQ1D];
+__constant__ double c_Dmat[MAX_P1 * MAX_NQ1D];
+__constant__ double c_blr[MAX_P1 * 2];
+__constant__ double c_wq[MAX_NQ1D];
+
 // ============================================================================
 // Device helper functions
 // ============================================================================
@@ -132,17 +140,15 @@ __device__ void riemannBC_d(const double UL[4], double nx, double ny,
 }
 
 __device__ inline double evalPhiFace(int lf, int i, int j, int q,
-                                     const double* __restrict__ Bmat,
-                                     const double* __restrict__ blr,
                                      int P1, int nq1d)
 {
     int nqF = nq1d;
     double phiXi, phiEta;
     switch (lf) {
-        case 0: phiXi = Bmat[i * nq1d + q];               phiEta = blr[j * 2 + 0]; break;
-        case 1: phiXi = blr[i * 2 + 1];                   phiEta = Bmat[j * nq1d + q]; break;
-        case 2: phiXi = Bmat[i * nq1d + (nqF - 1 - q)];   phiEta = blr[j * 2 + 1]; break;
-        case 3: phiXi = blr[i * 2 + 0];                   phiEta = Bmat[j * nq1d + (nqF - 1 - q)]; break;
+        case 0: phiXi = c_Bmat[i * nq1d + q];               phiEta = c_blr[j * 2 + 0]; break;
+        case 1: phiXi = c_blr[i * 2 + 1];                   phiEta = c_Bmat[j * nq1d + q]; break;
+        case 2: phiXi = c_Bmat[i * nq1d + (nqF - 1 - q)];   phiEta = c_blr[j * 2 + 1]; break;
+        case 3: phiXi = c_blr[i * 2 + 0];                   phiEta = c_Bmat[j * nq1d + (nqF - 1 - q)]; break;
         default: phiXi = 0; phiEta = 0;
     }
     return phiXi * phiEta;
@@ -158,9 +164,7 @@ __global__ void forwardTransformKernel(
     const double* __restrict__ d_U,
     double* __restrict__ d_Ucoeff,
     const double* __restrict__ d_detJ,
-    const double* __restrict__ d_Bmat,
     const double* __restrict__ d_Minv,
-    const double* __restrict__ d_wq,
     int nE, int P1, int nq1d, int nmodes, int nqVol, int totalDOF)
 {
     int e = blockIdx.x;
@@ -180,11 +184,11 @@ __global__ void forwardTransformKernel(
 
         double val = 0.0;
         for (int qx = 0; qx < nq1d; ++qx) {
-            double Bi = d_Bmat[mi * nq1d + qx];
+            double Bi = c_Bmat[mi * nq1d + qx];
             for (int qe = 0; qe < nq1d; ++qe) {
                 int qIdx = e * nqVol + qx * nq1d + qe;
-                double weight = d_wq[qx] * d_wq[qe] * d_detJ[qIdx];
-                val += weight * Bi * d_Bmat[mj * nq1d + qe]
+                double weight = c_wq[qx] * c_wq[qe] * d_detJ[qIdx];
+                val += weight * Bi * c_Bmat[mj * nq1d + qe]
                      * d_U[v * totalDOF + qIdx];
             }
         }
@@ -207,7 +211,14 @@ __global__ void forwardTransformKernel(
 }
 
 // ============================================================================
-// Kernel 2: Volume + surface integral (flat, 1 thread per (e,v,m))
+// Kernel 2: Volume + surface integral (1 block per element, shared memory)
+//   Phase 1: Load element data (U, metrics, Ucoeff) into shared memory
+//   Phase 2: Volume integral   -- threads [0, NVAR*nmodes) compute (v,m) pairs
+//   Phase 3: Surface flux      -- threads [NVAR*nmodes, NVAR*nmodes+4*nqFace)
+//            precompute Lax-Friedrichs fluxes at face quad points
+//   Phase 4: Surface integral  -- threads [0, NVAR*nmodes) accumulate from
+//            precomputed fluxes
+//   Phases 2 and 3 run concurrently on separate warps.
 // ============================================================================
 
 __global__ void volumeSurfaceKernel(
@@ -222,10 +233,6 @@ __global__ void volumeSurfaceKernel(
     const double* __restrict__ d_faceNx,
     const double* __restrict__ d_faceNy,
     const double* __restrict__ d_faceJac,
-    const double* __restrict__ d_Bmat,
-    const double* __restrict__ d_Dmat,
-    const double* __restrict__ d_blr,
-    const double* __restrict__ d_wq,
     const int* __restrict__ d_elem2face,
     const int* __restrict__ d_face_elemL,
     const int* __restrict__ d_face_elemR,
@@ -235,57 +242,98 @@ __global__ void volumeSurfaceKernel(
     int nE, int P1, int nq1d, int nmodes, int nqVol, int totalDOF, int nqFace,
     double rhoInf, double uInf, double vInf, double pInf)
 {
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    int total = nE * NVAR_GPU * nmodes;
-    if (tid >= total) return;
+    int e = blockIdx.x;
+    if (e >= nE) return;
 
-    int m = tid % nmodes;
-    int v = (tid / nmodes) % NVAR_GPU;
-    int e = tid / (NVAR_GPU * nmodes);
+    int tid = threadIdx.x;
+    int nwork    = NVAR_GPU * nmodes;
+    int nFaceQP  = 4 * nqFace;
 
-    int mi = m / P1;
-    int mj = m % P1;
+    extern __shared__ double smem[];
+    double* sU      = smem;                             // [4 * nqVol]
+    double* sDetJ   = sU      + 4 * nqVol;             // [nqVol]
+    double* sDxidx  = sDetJ   + nqVol;                  // [nqVol]
+    double* sDxidy  = sDxidx  + nqVol;                  // [nqVol]
+    double* sDetadx = sDxidy  + nqVol;                  // [nqVol]
+    double* sDetady = sDetadx + nqVol;                  // [nqVol]
+    double* sUcoeff = sDetady + nqVol;                  // [4 * nmodes]
+    double* sFnumW  = sUcoeff + 4 * nmodes;             // [nFaceQP * 4]
 
-    // ===== Volume integral =====
-    double vol = 0.0;
-    for (int qx = 0; qx < nq1d; ++qx) {
-        double Bi  = d_Bmat[mi * nq1d + qx];
-        double Di  = d_Dmat[mi * nq1d + qx];
-        for (int qe = 0; qe < nq1d; ++qe) {
-            int qIdx = e * nqVol + qx * nq1d + qe;
-            double w = d_wq[qx] * d_wq[qe] * d_detJ[qIdx];
+    // ===== Phase 1: Cooperatively load element data =====
+    int baseQ = e * nqVol;
+    for (int i = tid; i < nqVol; i += blockDim.x) {
+        int gIdx = baseQ + i;
+        sU[0 * nqVol + i] = d_U[0 * totalDOF + gIdx];
+        sU[1 * nqVol + i] = d_U[1 * totalDOF + gIdx];
+        sU[2 * nqVol + i] = d_U[2 * totalDOF + gIdx];
+        sU[3 * nqVol + i] = d_U[3 * totalDOF + gIdx];
+        sDetJ[i]   = d_detJ[gIdx];
+        sDxidx[i]  = d_dxidx[gIdx];
+        sDxidy[i]  = d_dxidy[gIdx];
+        sDetadx[i] = d_detadx[gIdx];
+        sDetady[i] = d_detady[gIdx];
+    }
+    for (int i = tid; i < 4 * nmodes; i += blockDim.x) {
+        int vv = i / nmodes;
+        int mm = i % nmodes;
+        sUcoeff[i] = d_Ucoeff[vv * nE * nmodes + e * nmodes + mm];
+    }
+    __syncthreads();
 
-            double rho  = d_U[0 * totalDOF + qIdx];
-            double rhou = d_U[1 * totalDOF + qIdx];
-            double rhov = d_U[2 * totalDOF + qIdx];
-            double rhoE = d_U[3 * totalDOF + qIdx];
+    // ===== Phase 2: Volume integral (threads 0..nwork-1) =====
+    double volResult = 0.0;
+    int v_id = -1, m_id = -1, mi_id = 0, mj_id = 0;
 
-            double uv = rhou / rho;
-            double vv = rhov / rho;
-            double p  = (GAMMA_GPU - 1.0) * (rhoE - 0.5 * rho * (uv*uv + vv*vv));
+    if (tid < nwork) {
+        v_id  = tid / nmodes;
+        m_id  = tid % nmodes;
+        mi_id = m_id / P1;
+        mj_id = m_id % P1;
 
-            double fx, fy;
-            switch (v) {
-                case 0: fx = rhou;           fy = rhov;           break;
-                case 1: fx = rhou*uv + p;    fy = rhov*uv;        break;
-                case 2: fx = rhou*vv;        fy = rhov*vv + p;    break;
-                default: fx = (rhoE+p)*uv;   fy = (rhoE+p)*vv;    break;
+        for (int qx = 0; qx < nq1d; ++qx) {
+            double Bi = c_Bmat[mi_id * nq1d + qx];
+            double Di = c_Dmat[mi_id * nq1d + qx];
+            for (int qe = 0; qe < nq1d; ++qe) {
+                int qLocal = qx * nq1d + qe;
+                double w = c_wq[qx] * c_wq[qe] * sDetJ[qLocal];
+
+                double rho  = sU[0 * nqVol + qLocal];
+                double rhou = sU[1 * nqVol + qLocal];
+                double rhov = sU[2 * nqVol + qLocal];
+                double rhoE = sU[3 * nqVol + qLocal];
+
+                double uv = rhou / rho;
+                double vv = rhov / rho;
+                double p  = (GAMMA_GPU - 1.0) * (rhoE - 0.5 * rho * (uv*uv + vv*vv));
+
+                double fx, fy;
+                switch (v_id) {
+                    case 0: fx = rhou;           fy = rhov;           break;
+                    case 1: fx = rhou*uv + p;    fy = rhov*uv;        break;
+                    case 2: fx = rhou*vv;        fy = rhov*vv + p;    break;
+                    default: fx = (rhoE+p)*uv;   fy = (rhoE+p)*vv;    break;
+                }
+
+                double Bj = c_Bmat[mj_id * nq1d + qe];
+                double Dj = c_Dmat[mj_id * nq1d + qe];
+                double dphidxi  = Di * Bj;
+                double dphideta = Bi * Dj;
+                double dphidx = sDxidx[qLocal]  * dphidxi + sDetadx[qLocal] * dphideta;
+                double dphidy = sDxidy[qLocal]  * dphidxi + sDetady[qLocal] * dphideta;
+
+                volResult += w * (fx * dphidx + fy * dphidy);
             }
-
-            double Bj  = d_Bmat[mj * nq1d + qe];
-            double Dj  = d_Dmat[mj * nq1d + qe];
-            double dphidxi  = Di * Bj;
-            double dphideta = Bi * Dj;
-            double dphidx = d_dxidx[qIdx]  * dphidxi + d_detadx[qIdx] * dphideta;
-            double dphidy = d_dxidy[qIdx]  * dphidxi + d_detady[qIdx] * dphideta;
-
-            vol += w * (fx * dphidx + fy * dphidy);
         }
     }
 
-    // ===== Surface integral (element-centric, no atomics) =====
-    double surf = 0.0;
-    for (int lf = 0; lf < 4; ++lf) {
+    // ===== Phase 3: Precompute surface numerical fluxes =====
+    // Threads [nwork .. nwork+nFaceQP) each handle one (face, quad_point).
+    // Runs concurrently with Phase 2 on separate warps.
+    else if (tid < nwork + nFaceQP) {
+        int fq_id = tid - nwork;
+        int lf = fq_id / nqFace;
+        int q  = fq_id % nqFace;
+
         int f  = d_elem2face[e * 4 + lf];
         int eL = d_face_elemL[f];
         int eR = d_face_elemR[f];
@@ -294,55 +342,63 @@ __global__ void volumeSurfaceKernel(
         int lfN = is_left ? d_face_faceR[f] : d_face_faceL[f];
         bool is_boundary = (eN < 0);
 
-        for (int q = 0; q < nqFace; ++q) {
-            int q_face = is_left ? q : (nqFace - 1 - q);
-            int fIdx = f * nqFace + q_face;
-            double nx = d_faceNx[fIdx];
-            double ny = d_faceNy[fIdx];
-            double wf = d_wq[q] * d_faceJac[fIdx];
+        int q_face = is_left ? q : (nqFace - 1 - q);
+        int fIdx = f * nqFace + q_face;
+        double nx = d_faceNx[fIdx];
+        double ny = d_faceNy[fIdx];
+        double wf = c_wq[q] * d_faceJac[fIdx];
 
-            // Evaluate own trace
-            double UMe[4] = {0, 0, 0, 0};
-            for (int vv = 0; vv < 4; ++vv)
+        double UMe[4] = {0, 0, 0, 0};
+        for (int vv = 0; vv < 4; ++vv)
+            for (int ii = 0; ii < P1; ++ii)
+                for (int jj = 0; jj < P1; ++jj)
+                    UMe[vv] += sUcoeff[vv * nmodes + ii * P1 + jj]
+                             * evalPhiFace(lf, ii, jj, q, P1, nq1d);
+
+        double UNbr[4];
+        if (!is_boundary) {
+            int qN = nqFace - 1 - q;
+            for (int vv = 0; vv < 4; ++vv) {
+                UNbr[vv] = 0.0;
                 for (int ii = 0; ii < P1; ++ii)
                     for (int jj = 0; jj < P1; ++jj)
-                        UMe[vv] += d_Ucoeff[vv * nE * nmodes + e * nmodes + ii*P1+jj]
-                                 * evalPhiFace(lf, ii, jj, q, d_Bmat, d_blr, P1, nq1d);
-
-            // Evaluate neighbor trace or boundary ghost
-            double UNbr[4];
-            if (!is_boundary) {
-                int qN = nqFace - 1 - q;
-                for (int vv = 0; vv < 4; ++vv) {
-                    UNbr[vv] = 0.0;
-                    for (int ii = 0; ii < P1; ++ii)
-                        for (int jj = 0; jj < P1; ++jj)
-                            UNbr[vv] += d_Ucoeff[vv * nE * nmodes + eN * nmodes + ii*P1+jj]
-                                      * evalPhiFace(lfN, ii, jj, qN, d_Bmat, d_blr, P1, nq1d);
-                }
-            } else {
-                int bcType = d_face_bcType[f];
-                if (bcType == 1)
-                    slipWallBC_d(UMe, nx, ny, UNbr);
-                else if (bcType == 2)
-                    riemannBC_d(UMe, nx, ny, rhoInf, uInf, vInf, pInf, UNbr);
-                else
-                    for (int vv = 0; vv < 4; ++vv) UNbr[vv] = UMe[vv];
+                        UNbr[vv] += d_Ucoeff[vv * nE * nmodes + eN * nmodes + ii*P1+jj]
+                                  * evalPhiFace(lfN, ii, jj, qN, P1, nq1d);
             }
-
-            double Fnum[4];
-            if (is_left)
-                laxFriedrichs_d(UMe, UNbr, nx, ny, Fnum);
+        } else {
+            int bcType = d_face_bcType[f];
+            if (bcType == 1)
+                slipWallBC_d(UMe, nx, ny, UNbr);
+            else if (bcType == 2)
+                riemannBC_d(UMe, nx, ny, rhoInf, uInf, vInf, pInf, UNbr);
             else
-                laxFriedrichs_d(UNbr, UMe, nx, ny, Fnum);
-
-            double sign = is_left ? -1.0 : 1.0;
-            double phi = evalPhiFace(lf, mi, mj, q, d_Bmat, d_blr, P1, nq1d);
-            surf += sign * wf * Fnum[v] * phi;
+                for (int vv = 0; vv < 4; ++vv) UNbr[vv] = UMe[vv];
         }
+
+        double Fnum[4];
+        if (is_left)
+            laxFriedrichs_d(UMe, UNbr, nx, ny, Fnum);
+        else
+            laxFriedrichs_d(UNbr, UMe, nx, ny, Fnum);
+
+        double sign = is_left ? -1.0 : 1.0;
+        for (int vv = 0; vv < 4; ++vv)
+            sFnumW[fq_id * 4 + vv] = sign * wf * Fnum[vv];
     }
 
-    d_rhsCoeff[v * nE * nmodes + e * nmodes + m] = vol + surf;
+    __syncthreads();
+
+    // ===== Phase 4: Surface integral + write result =====
+    if (tid < nwork) {
+        double surfResult = 0.0;
+        for (int fq = 0; fq < nFaceQP; ++fq) {
+            int lf = fq / nqFace;
+            int q  = fq % nqFace;
+            double phi = evalPhiFace(lf, mi_id, mj_id, q, P1, nq1d);
+            surfResult += sFnumW[fq * 4 + v_id] * phi;
+        }
+        d_rhsCoeff[v_id * nE * nmodes + e * nmodes + m_id] = volResult + surfResult;
+    }
 }
 
 // ============================================================================
@@ -355,7 +411,6 @@ __global__ void massSolveBackwardKernel(
     const double* __restrict__ d_rhsCoeff,
     double* __restrict__ d_R,
     const double* __restrict__ d_Minv,
-    const double* __restrict__ d_Bmat,
     int nE, int P1, int nq1d, int nmodes, int nqVol, int totalDOF)
 {
     int e = blockIdx.x;
@@ -390,9 +445,9 @@ __global__ void massSolveBackwardKernel(
 
         double val = 0.0;
         for (int i = 0; i < P1; ++i) {
-            double Bi = d_Bmat[i * nq1d + qx];
+            double Bi = c_Bmat[i * nq1d + qx];
             for (int j = 0; j < P1; ++j)
-                val += dUdt[v * nmodes + i * P1 + j] * Bi * d_Bmat[j * nq1d + qe];
+                val += dUdt[v * nmodes + i * P1 + j] * Bi * c_Bmat[j * nq1d + qe];
         }
 
         d_R[v * totalDOF + e * nqVol + q] = val;
@@ -448,7 +503,10 @@ __device__ double atomicMinDouble(double* addr, double val)
 
 __global__ void cflKernel(
     const double* __restrict__ d_U,
-    const double* __restrict__ d_detJ,
+    const double* __restrict__ d_dxidx,
+    const double* __restrict__ d_dxidy,
+    const double* __restrict__ d_detadx,
+    const double* __restrict__ d_detady,
     double* __restrict__ d_dtMin,
     int nE, int nqVol, int totalDOF, double CFL, int P)
 {
@@ -460,9 +518,9 @@ __global__ void cflKernel(
     double myMin = 1e20;
 
     for (int i = idx; i < nE * nqVol; i += gridDim.x * blockDim.x) {
-        int e = i / nqVol;
-        double det = fabs(d_detJ[e * nqVol]);
-        double h   = sqrt(det);
+        double gradXi  = sqrt(d_dxidx[i]*d_dxidx[i] + d_dxidy[i]*d_dxidy[i]);
+        double gradEta = sqrt(d_detadx[i]*d_detadx[i] + d_detady[i]*d_detady[i]);
+        double h = 1.0 / fmax(gradXi, gradEta);
 
         double rho  = d_U[0 * totalDOF + i];
         double u    = d_U[1 * totalDOF + i] / rho;
@@ -625,6 +683,11 @@ void gpuCopyStaticData(
     CUDA_CHECK(cudaMemcpy(gpu.d_Minv, Minv, nE*nmodes*nmodes*sizeof(double), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(gpu.d_wq,   wq,   nq1d*sizeof(double), cudaMemcpyHostToDevice));
 
+    CUDA_CHECK(cudaMemcpyToSymbol(c_Bmat, Bmat_flat, P1*nq1d*sizeof(double)));
+    CUDA_CHECK(cudaMemcpyToSymbol(c_Dmat, Dmat_flat, P1*nq1d*sizeof(double)));
+    CUDA_CHECK(cudaMemcpyToSymbol(c_blr,  blr_flat,  P1*2*sizeof(double)));
+    CUDA_CHECK(cudaMemcpyToSymbol(c_wq,   wq,        nq1d*sizeof(double)));
+
     CUDA_CHECK(cudaMemcpy(gpu.d_elem2face,   elem2face_flat, nE*4*sizeof(int), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(gpu.d_face_elemL,  face_elemL,  nF*sizeof(int), cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(gpu.d_face_elemR,  face_elemR,  nF*sizeof(int), cudaMemcpyHostToDevice));
@@ -660,29 +723,34 @@ void gpuComputeDGRHS(GPUSolverData& gpu, bool useUtmp, double time)
     int nmodes = gpu.nmodes, nqVol = gpu.nqVol, totalDOF = gpu.totalDOF;
     int nqFace = gpu.nqFace;
 
-    int blockDim1 = 64;
+    // --- Kernel 1: Forward transform ---
+    int blockDim1 = max(64, NVAR_GPU * nmodes);
+    if (blockDim1 % 32 != 0) blockDim1 = ((blockDim1 + 31) / 32) * 32;
     int smem1 = NVAR_GPU * nmodes * sizeof(double);
     forwardTransformKernel<<<nE, blockDim1, smem1>>>(
-        d_Uin, gpu.d_Ucoeff, gpu.d_detJ, gpu.d_Bmat, gpu.d_Minv, gpu.d_wq,
+        d_Uin, gpu.d_Ucoeff, gpu.d_detJ, gpu.d_Minv,
         nE, P1, nq1d, nmodes, nqVol, totalDOF);
 
-    int totalThreads2 = nE * NVAR_GPU * nmodes;
-    int blockDim2 = 256;
-    int gridDim2 = (totalThreads2 + blockDim2 - 1) / blockDim2;
-    volumeSurfaceKernel<<<gridDim2, blockDim2>>>(
+    // --- Kernel 2: Volume + surface integral (1 block per element) ---
+    int nwork    = NVAR_GPU * nmodes;
+    int nFaceQP  = 4 * nqFace;
+    int blockDim2 = ((nwork + nFaceQP + 31) / 32) * 32;
+    int smem2 = (9 * nqVol + 4 * nmodes + nFaceQP * 4) * sizeof(double);
+    volumeSurfaceKernel<<<nE, blockDim2, smem2>>>(
         d_Uin, gpu.d_Ucoeff, gpu.d_rhsCoeff,
         gpu.d_detJ, gpu.d_dxidx, gpu.d_dxidy, gpu.d_detadx, gpu.d_detady,
         gpu.d_faceNx, gpu.d_faceNy, gpu.d_faceJac,
-        gpu.d_Bmat, gpu.d_Dmat, gpu.d_blr, gpu.d_wq,
         gpu.d_elem2face, gpu.d_face_elemL, gpu.d_face_elemR,
         gpu.d_face_faceL, gpu.d_face_faceR, gpu.d_face_bcType,
         nE, P1, nq1d, nmodes, nqVol, totalDOF, nqFace,
         gpu.rhoInf, gpu.uInf, gpu.vInf, gpu.pInf);
 
-    int blockDim3 = 64;
+    // --- Kernel 3: Mass solve + backward transform ---
+    int blockDim3 = max(64, NVAR_GPU * nmodes);
+    if (blockDim3 % 32 != 0) blockDim3 = ((blockDim3 + 31) / 32) * 32;
     int smem3 = NVAR_GPU * nmodes * sizeof(double);
     massSolveBackwardKernel<<<nE, blockDim3, smem3>>>(
-        gpu.d_rhsCoeff, gpu.d_R, gpu.d_Minv, gpu.d_Bmat,
+        gpu.d_rhsCoeff, gpu.d_R, gpu.d_Minv,
         nE, P1, nq1d, nmodes, nqVol, totalDOF);
 }
 
@@ -725,8 +793,8 @@ double gpuComputeCFL(GPUSolverData& gpu, double CFL, int P)
     int smem = blockDim * sizeof(double);
 
     cflKernel<<<gridDim, blockDim, smem>>>(
-        gpu.d_U, gpu.d_detJ, gpu.d_dtMin,
-        gpu.nE, gpu.nqVol, gpu.totalDOF, CFL, P);
+        gpu.d_U, gpu.d_dxidx, gpu.d_dxidy, gpu.d_detadx, gpu.d_detady,
+        gpu.d_dtMin, gpu.nE, gpu.nqVol, gpu.totalDOF, CFL, P);
 
     double dtMin;
     CUDA_CHECK(cudaMemcpy(&dtMin, gpu.d_dtMin, sizeof(double), cudaMemcpyDeviceToHost));

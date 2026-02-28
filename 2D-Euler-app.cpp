@@ -27,18 +27,121 @@ using namespace polylib;
 static double g_rhoInf, g_uInf, g_vInf, g_pInf;
 
 // ============================================================================
-// VTK output (unstructured grid)
+// Evaluate 1D modal basis at arbitrary points
+// ============================================================================
+
+static void evalModalBasis1D(int P, const std::vector<double>& zpts,
+                             std::vector<std::vector<double>>& Bvis)
+{
+    int npts = (int)zpts.size();
+    Bvis.resize(P + 1, std::vector<double>(npts));
+    for (int p = 0; p <= P; ++p) {
+        for (int i = 0; i < npts; ++i) {
+            double z = zpts[i];
+            if (p == 0)
+                Bvis[p][i] = (1.0 - z) / 2.0;
+            else if (p == P)
+                Bvis[p][i] = (1.0 + z) / 2.0;
+            else {
+                double val;
+                polylib::jacobfd(1, &z, &val, NULL, p - 1, 1.0, 1.0);
+                Bvis[p][i] = (1.0 - z) / 2.0 * (1.0 + z) / 2.0 * val;
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Evaluate 1D nodal basis at arbitrary points
+// ============================================================================
+
+static void evalNodalBasis1D(int P, const std::string& ptype,
+                             const std::vector<double>& zn_in,
+                             const std::vector<double>& zpts,
+                             std::vector<std::vector<double>>& Bvis)
+{
+    std::vector<double> zn(zn_in);
+    int npts = (int)zpts.size();
+    Bvis.resize(P + 1, std::vector<double>(npts));
+    for (int p = 0; p <= P; ++p)
+        for (int i = 0; i < npts; ++i) {
+            if (ptype == "GaussLegendre")
+                Bvis[p][i] = polylib::hgj(p, zpts[i], zn.data(), P + 1, 0.0, 0.0);
+            else
+                Bvis[p][i] = polylib::hglj(p, zpts[i], zn.data(), P + 1, 0.0, 0.0);
+        }
+}
+
+// ============================================================================
+// VTK output with interpolation to equispaced points (no gaps)
 // ============================================================================
 
 static void writeVTK(const std::string& filename,
                      const Mesh2D& mesh,
                      const GeomData2D& geom,
                      const std::vector<std::vector<double>>& U,
-                     int nq1d, int nqVol)
+                     const std::vector<std::vector<double>>& Bmat,
+                     const std::vector<std::vector<double>>& Bvis,
+                     const std::vector<double>& Minv,
+                     const std::vector<double>& wq,
+                     const std::vector<double>& zVis,
+                     int P, int nq1d)
 {
     int nE = mesh.nElements;
-    int totalPts = nE * nqVol;
+    int nqVol = nq1d * nq1d;
+    int nmodes = (P + 1) * (P + 1);
+    int nVis = (int)zVis.size();
+    int nVisVol = nVis * nVis;
+    int totalPts = nE * nVisVol;
 
+    // Compute physical coordinates and interpolated solution at vis points
+    std::vector<double> xVis(totalPts), yVis(totalPts);
+    std::vector<std::vector<double>> Uvis(NVAR2D, std::vector<double>(totalPts));
+
+    for (int e = 0; e < nE; ++e)
+    {
+        // Forward transform: project to modal coefficients
+        std::vector<double> coeff(NVAR2D * nmodes, 0.0);
+        for (int v = 0; v < NVAR2D; ++v)
+        {
+            std::vector<double> proj(nmodes, 0.0);
+            for (int i = 0; i <= P; ++i)
+                for (int j = 0; j <= P; ++j) {
+                    int m = i * (P + 1) + j;
+                    for (int qx = 0; qx < nq1d; ++qx)
+                        for (int qe = 0; qe < nq1d; ++qe) {
+                            int qIdx = e * nqVol + qx * nq1d + qe;
+                            double w = wq[qx] * wq[qe] * geom.detJ[qIdx];
+                            proj[m] += w * Bmat[i][qx] * Bmat[j][qe] * U[v][qIdx];
+                        }
+                }
+            for (int m = 0; m < nmodes; ++m) {
+                double val = 0.0;
+                for (int mp = 0; mp < nmodes; ++mp)
+                    val += Minv[e * nmodes * nmodes + m * nmodes + mp] * proj[mp];
+                coeff[v * nmodes + m] = val;
+            }
+        }
+
+        // Evaluate at vis points: physical coords + backward transform
+        for (int ix = 0; ix < nVis; ++ix)
+            for (int iy = 0; iy < nVis; ++iy)
+            {
+                int idx = e * nVisVol + ix * nVis + iy;
+                refToPhys(mesh, e, zVis[ix], zVis[iy], xVis[idx], yVis[idx]);
+
+                for (int v = 0; v < NVAR2D; ++v) {
+                    double val = 0.0;
+                    for (int i = 0; i <= P; ++i)
+                        for (int j = 0; j <= P; ++j)
+                            val += coeff[v * nmodes + i*(P+1)+j]
+                                 * Bvis[i][ix] * Bvis[j][iy];
+                    Uvis[v][idx] = val;
+                }
+            }
+    }
+
+    // Write VTK file
     std::ofstream out(filename);
     out << "# vtk DataFile Version 3.0\n";
     out << "2D Euler DG Solution\n";
@@ -47,26 +150,23 @@ static void writeVTK(const std::string& filename,
 
     out << "POINTS " << totalPts << " double\n";
     for (int i = 0; i < totalPts; ++i)
-        out << geom.xPhys[i] << " " << geom.yPhys[i] << " 0.0\n";
+        out << xVis[i] << " " << yVis[i] << " 0.0\n";
 
-    int nSubX = nq1d - 1;
-    int nSubY = nq1d - 1;
-    int nCells = nE * nSubX * nSubY;
+    int nSub = nVis - 1;
+    int nCells = nE * nSub * nSub;
     out << "CELLS " << nCells << " " << nCells * 5 << "\n";
     for (int e = 0; e < nE; ++e)
     {
-        int base = e * nqVol;
-        for (int ix = 0; ix < nSubX; ++ix)
-        {
-            for (int iy = 0; iy < nSubY; ++iy)
+        int base = e * nVisVol;
+        for (int ix = 0; ix < nSub; ++ix)
+            for (int iy = 0; iy < nSub; ++iy)
             {
-                int p0 = base + ix * nq1d + iy;
-                int p1 = base + (ix + 1) * nq1d + iy;
-                int p2 = base + (ix + 1) * nq1d + (iy + 1);
-                int p3 = base + ix * nq1d + (iy + 1);
+                int p0 = base + ix * nVis + iy;
+                int p1 = base + (ix+1) * nVis + iy;
+                int p2 = base + (ix+1) * nVis + (iy+1);
+                int p3 = base + ix * nVis + (iy+1);
                 out << "4 " << p0 << " " << p1 << " " << p2 << " " << p3 << "\n";
             }
-        }
     }
 
     out << "CELL_TYPES " << nCells << "\n";
@@ -77,27 +177,27 @@ static void writeVTK(const std::string& filename,
 
     out << "SCALARS Density double 1\nLOOKUP_TABLE default\n";
     for (int i = 0; i < totalPts; ++i)
-        out << U[0][i] << "\n";
+        out << Uvis[0][i] << "\n";
 
     out << "SCALARS VelocityMagnitude double 1\nLOOKUP_TABLE default\n";
     for (int i = 0; i < totalPts; ++i)
     {
-        double u = U[1][i] / U[0][i];
-        double v = U[2][i] / U[0][i];
+        double u = Uvis[1][i] / Uvis[0][i];
+        double v = Uvis[2][i] / Uvis[0][i];
         out << std::sqrt(u * u + v * v) << "\n";
     }
 
     out << "SCALARS Pressure double 1\nLOOKUP_TABLE default\n";
     for (int i = 0; i < totalPts; ++i)
-        out << pressure2D(U[0][i], U[1][i], U[2][i], U[3][i]) << "\n";
+        out << pressure2D(Uvis[0][i], Uvis[1][i], Uvis[2][i], Uvis[3][i]) << "\n";
 
     out << "SCALARS Mach double 1\nLOOKUP_TABLE default\n";
     for (int i = 0; i < totalPts; ++i)
     {
-        double u = U[1][i] / U[0][i];
-        double v = U[2][i] / U[0][i];
-        double p = pressure2D(U[0][i], U[1][i], U[2][i], U[3][i]);
-        double c = soundSpeed2D(U[0][i], p);
+        double u = Uvis[1][i] / Uvis[0][i];
+        double v = Uvis[2][i] / Uvis[0][i];
+        double p = pressure2D(Uvis[0][i], Uvis[1][i], Uvis[2][i], Uvis[3][i]);
+        double c = soundSpeed2D(Uvis[0][i], p);
         out << std::sqrt(u * u + v * v) / c << "\n";
     }
 
@@ -202,6 +302,22 @@ int main(int argc, char* argv[])
     computeMassInverse(massLU, massPiv, mesh.nElements, nmodes, Minv);
 
     // ========================================================================
+    // Build visualization basis (equispaced points including endpoints)
+    // ========================================================================
+    int nVis = std::max(nq1d, 15);
+    std::vector<double> zVis(nVis);
+    for (int i = 0; i < nVis; ++i)
+        zVis[i] = -1.0 + 2.0 * i / (nVis - 1);
+
+    std::vector<std::vector<double>> Bvis;
+    if (inp->btype == "Modal")
+        evalModalBasis1D(P, zVis, Bvis);
+    else {
+        std::vector<double> zn = basis1D->GetZn();
+        evalNodalBasis1D(P, inp->ptype, zn, zVis, Bvis);
+    }
+
+    // ========================================================================
     // Initial conditions
     // ========================================================================
     int nE = mesh.nElements;
@@ -265,7 +381,7 @@ int main(int argc, char* argv[])
             }
     }
 
-    writeVTK("solution2d_init.vtk", mesh, geom, U, nq1d, nqVol);
+    writeVTK("solution2d_init.vtk", mesh, geom, U, Bmat, Bvis, Minv, wq, zVis, P, nq1d);
 
     // ========================================================================
     // Flatten data for GPU
@@ -281,7 +397,6 @@ int main(int argc, char* argv[])
         blr_flat[i * 2 + 0] = blr[i][0];
         blr_flat[i * 2 + 1] = blr[i][1];
     }
-
     std::vector<int> elem2face_flat(nE * 4);
     for (int e = 0; e < nE; ++e)
         for (int lf = 0; lf < 4; ++lf)
@@ -351,26 +466,27 @@ int main(int argc, char* argv[])
         if (CFL > 0.0)
             dt = gpuComputeCFL(gpu, CFL, P);
 
-        // Stage 1: RHS(U)
+        if (t_step < 5)
+            std::cout << "Step " << t_step << ": dt = " << dt << std::endl;
+
         gpuComputeDGRHS(gpu, false, time);
         gpuRK4Stage(gpu, dt, 1);
 
-        // Stage 2: RHS(Utmp)
         gpuComputeDGRHS(gpu, true, time + 0.5 * dt);
         gpuRK4Stage(gpu, dt, 2);
 
-        // Stage 3: RHS(Utmp)
         gpuComputeDGRHS(gpu, true, time + 0.5 * dt);
         gpuRK4Stage(gpu, dt, 3);
 
-        // Stage 4: RHS(Utmp)
         gpuComputeDGRHS(gpu, true, time + dt);
         gpuRK4Stage(gpu, dt, 4);
 
         time += dt;
 
-        if ((t_step + 1) % 500 == 0) {
+        if (t_step < 10 || (t_step + 1) % 500 == 0) {
             nanFound = gpuCheckNaN(gpu);
+            if (nanFound)
+                std::cout << "\nNaN first detected at step " << t_step << std::endl;
         }
 
         printProgressBar(t_step + 1, nt);
@@ -437,7 +553,7 @@ int main(int argc, char* argv[])
     // ========================================================================
     // Write final solution
     // ========================================================================
-    writeVTK("solution2d_final.vtk", mesh, geom, U, nq1d, nqVol);
+    writeVTK("solution2d_final.vtk", mesh, geom, U, Bmat, Bvis, Minv, wq, zVis, P, nq1d);
     std::cout << "Output written to solution2d_init.vtk, solution2d_final.vtk" << std::endl;
 
     gpuFree(gpu);

@@ -12,14 +12,16 @@
 // ============================================================
 //  Tuneable parameters
 // ============================================================
-nPts      = 40;       // spline control points per airfoil surface
-nAirfoil  = 40;       // mesh cells along each airfoil half
+nPts      = 80;       // spline control points per airfoil surface
+nAirfoil  = 60;       // mesh cells along each airfoil half
 nWake     = 20;       // mesh cells in the wake (TE -> exit)
-nNormal   = 40;       // cells in wall-normal / radial direction
-R         = 20;       // farfield distance (chord lengths)
-progR     = 1.1;      // normal growth ratio (>1 clusters near wall)
-progWake  = 1.30;     // wake growth ratio  (>1 clusters near TE)
-bumpCoef  = 0.25;     // airfoil Bump coeff (lower = more LE/TE clustering)
+nNormal   = 30;       // cells in wall-normal / radial direction
+R         = 30;       // farfield distance (chord lengths)
+progR     = 1.2;     // normal growth ratio (>1 clusters near wall)
+progWake  = 1.4;     // wake growth ratio  (>1 clusters near TE)
+progAirfoil  = 1.2;     // wake growth ratio  (>1 clusters near TE)
+
+bumpCoef  = 0.4;      // airfoil Bump coeff (lower = more LE/TE clustering)
 
 // ============================================================
 //  NACA 0012 airfoil (closed trailing edge, chord = 1)
@@ -134,7 +136,8 @@ Transfinite Curve {1, 2}      = nAirfoil + 1  Using Bump bumpCoef;
 Transfinite Curve {3, 4, 10}  = nWake + 1     Using Progression progWake;
 Transfinite Curve {5, 6}      = nNormal + 1   Using Progression progR;
 Transfinite Curve {7}         = nWake + 1     Using Progression 1/progWake;
-Transfinite Curve {8, 9}      = nAirfoil + 1;
+Transfinite Curve {8}         = nAirfoil + 1  Using Progression progAirfoil;
+Transfinite Curve {9}         = nAirfoil + 1  Using Progression 1/progAirfoil;
 Transfinite Curve {11, 12, 13} = nNormal + 1  Using Progression progR;
 
 Transfinite Surface {1} = {1, nPts+1, pSemiT, pUpstr};
@@ -156,4 +159,4 @@ Physical Surface("Domain", 5) = {1, 2, 3, 4};
 //  Output
 // ============================================================
 Mesh.MshFileVersion = 2.2;
-Mesh.ElementOrder   = 1;
+Mesh.ElementOrder   = 2;

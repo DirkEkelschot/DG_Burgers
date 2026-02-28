@@ -3,55 +3,140 @@
 #include <stdexcept>
 #include <iostream>
 
+// ============================================================================
+// 1D Lagrange basis on equispaced nodes in [-1, 1]
+// ============================================================================
+
+static inline void lagrange1D(int order, double z,
+                               double* L, double* dL)
+{
+    int n = order + 1;
+    double nodes[4];
+    for (int i = 0; i < n; ++i)
+        nodes[i] = -1.0 + 2.0 * i / order;
+
+    for (int i = 0; i < n; ++i)
+    {
+        double li = 1.0, dli = 0.0;
+        for (int j = 0; j < n; ++j)
+        {
+            if (j == i) continue;
+            double lij = (z - nodes[j]) / (nodes[i] - nodes[j]);
+            double dlij = 1.0 / (nodes[i] - nodes[j]);
+
+            dli = dli * lij + li * dlij;
+            li *= lij;
+        }
+        L[i]  = li;
+        dL[i] = dli;
+    }
+}
+
+// ============================================================================
+// (i_xi, i_eta) indices for each node in Gmsh ordering
+//
+// Q1: corners CCW  0=(−1,−1) 1=(+1,−1) 2=(+1,+1) 3=(−1,+1)
+//     i_xi:  0, 1, 1, 0      i_eta: 0, 0, 1, 1
+//
+// Q2: Gmsh 9-node quad layout
+//     3---6---2
+//     |       |
+//     7   8   5
+//     |       |
+//     0---4---1
+//
+//     node k  : 0  1  2  3  4  5  6  7  8
+//     i_xi    : 0  2  2  0  1  2  1  0  1
+//     i_eta   : 0  0  2  2  0  1  2  1  1
+// ============================================================================
+
+static const int Q1_ixi [4] = {0, 1, 1, 0};
+static const int Q1_ieta[4] = {0, 0, 1, 1};
+
+static const int Q2_ixi [9] = {0, 2, 2, 0, 1, 2, 1, 0, 1};
+static const int Q2_ieta[9] = {0, 0, 2, 2, 0, 1, 2, 1, 1};
+
+void geomShapeFunctions(int geomOrder, double xi, double eta,
+                        double* N, double* dNdxi, double* dNdeta)
+{
+    int n1d = geomOrder + 1;
+    double Lxi[4], dLxi[4], Leta[4], dLeta[4];
+    lagrange1D(geomOrder, xi,  Lxi,  dLxi);
+    lagrange1D(geomOrder, eta, Leta, dLeta);
+
+    const int* ixi;
+    const int* ieta;
+    int nNodes;
+
+    if (geomOrder == 1) {
+        ixi  = Q1_ixi;
+        ieta = Q1_ieta;
+        nNodes = 4;
+    } else {
+        ixi  = Q2_ixi;
+        ieta = Q2_ieta;
+        nNodes = 9;
+    }
+
+    for (int k = 0; k < nNodes; ++k)
+    {
+        int ix = ixi[k];
+        int ie = ieta[k];
+        N[k]      = Lxi[ix]  * Leta[ie];
+        dNdxi[k]  = dLxi[ix] * Leta[ie];
+        dNdeta[k] = Lxi[ix]  * dLeta[ie];
+    }
+}
+
+// ============================================================================
+// Legacy bilinear interface (unchanged for any callers that still use it)
+// ============================================================================
+
 void bilinearShapeFunctions(double xi, double eta,
                             double N[4], double dNdxi[4], double dNdeta[4])
 {
-    N[0] = 0.25 * (1.0 - xi) * (1.0 - eta);
-    N[1] = 0.25 * (1.0 + xi) * (1.0 - eta);
-    N[2] = 0.25 * (1.0 + xi) * (1.0 + eta);
-    N[3] = 0.25 * (1.0 - xi) * (1.0 + eta);
-
-    dNdxi[0] = -0.25 * (1.0 - eta);
-    dNdxi[1] =  0.25 * (1.0 - eta);
-    dNdxi[2] =  0.25 * (1.0 + eta);
-    dNdxi[3] = -0.25 * (1.0 + eta);
-
-    dNdeta[0] = -0.25 * (1.0 - xi);
-    dNdeta[1] = -0.25 * (1.0 + xi);
-    dNdeta[2] =  0.25 * (1.0 + xi);
-    dNdeta[3] =  0.25 * (1.0 - xi);
+    geomShapeFunctions(1, xi, eta, N, dNdxi, dNdeta);
 }
+
+// ============================================================================
+// Reference to physical coordinate mapping
+// ============================================================================
 
 void refToPhys(const Mesh2D& mesh, int elem,
                double xi, double eta,
                double& xp, double& yp)
 {
-    double N[4], dNdxi[4], dNdeta[4];
-    bilinearShapeFunctions(xi, eta, N, dNdxi, dNdeta);
+    int nGN = mesh.nGeomNodes;
+    double N[9], dNdxi[9], dNdeta[9];
+    geomShapeFunctions(mesh.geomOrder, xi, eta, N, dNdxi, dNdeta);
 
     xp = 0.0;
     yp = 0.0;
-    for (int k = 0; k < 4; ++k)
+    for (int k = 0; k < nGN; ++k)
     {
         xp += N[k] * mesh.nodes[mesh.elements[elem][k]][0];
         yp += N[k] * mesh.nodes[mesh.elements[elem][k]][1];
     }
 }
 
-// Compute Jacobian at a point inside element e
+// ============================================================================
+// Jacobian computation
+// ============================================================================
+
 static void computeJacobian(const Mesh2D& mesh, int e,
                             double xi, double eta,
                             double& dxdxi, double& dxdeta,
                             double& dydxi, double& dydeta,
                             double& det)
 {
-    double N[4], dNdxi[4], dNdeta[4];
-    bilinearShapeFunctions(xi, eta, N, dNdxi, dNdeta);
+    int nGN = mesh.nGeomNodes;
+    double N[9], dNdxi[9], dNdeta[9];
+    geomShapeFunctions(mesh.geomOrder, xi, eta, N, dNdxi, dNdeta);
 
     dxdxi  = 0.0; dxdeta = 0.0;
     dydxi  = 0.0; dydeta = 0.0;
 
-    for (int k = 0; k < 4; ++k)
+    for (int k = 0; k < nGN; ++k)
     {
         double xk = mesh.nodes[mesh.elements[e][k]][0];
         double yk = mesh.nodes[mesh.elements[e][k]][1];
@@ -65,12 +150,6 @@ static void computeJacobian(const Mesh2D& mesh, int e,
 }
 
 // Reference-space coordinates on each local face, parameterised by s in [-1,1].
-// Returns (xi, eta) on the face boundary.
-// Local face numbering:
-//   face 0: eta=-1,  xi  = s        (bottom)
-//   face 1: xi=+1,   eta = s        (right)
-//   face 2: eta=+1,  xi  = -s       (top, reversed so normal points outward)
-//   face 3: xi=-1,   eta = -s       (left, reversed)
 static void faceRefCoords(int localFace, double s, double& xi, double& eta)
 {
     switch (localFace)
@@ -82,6 +161,10 @@ static void faceRefCoords(int localFace, double s, double& xi, double& eta)
         default: xi = 0; eta = 0; break;
     }
 }
+
+// ============================================================================
+// Precompute geometry for all elements and faces
+// ============================================================================
 
 GeomData2D computeGeometry(const Mesh2D& mesh,
                            const std::vector<double>& xiVol,

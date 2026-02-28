@@ -4,7 +4,7 @@
         <P> PolynomialOrder = 2 </P>
         <P> nQuadrature = 4 </P>
         <P> CFL = 0.3 </P>
-        <P> nt = 5000 </P>
+        <P> nt = 15000 </P>
         <P> BasisType = Modal </P>
         <P> PointsType = GaussLegendre </P>
         <P> TimeScheme = RK4 </P>
