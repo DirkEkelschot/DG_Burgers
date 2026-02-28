@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<DGSOLVER>
+    <PARAMETERS>
+        <P> PolynomialOrder = 2 </P>
+        <P> nQuadrature = 4 </P>
+        <P> CFL = 0.3 </P>
+        <P> nt = 5000 </P>
+        <P> BasisType = Modal </P>
+        <P> PointsType = GaussLegendre </P>
+        <P> TimeScheme = RK4 </P>
+        <P> MeshFile = naca0012_quad.msh </P>
+        <P> TestCase = NACA0012 </P>
+        <P> Mach = 0.5 </P>
+        <P> AoA = 0.0 </P>
+    </PARAMETERS>
+</DGSOLVER>

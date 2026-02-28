@@ -176,7 +176,7 @@ void computeDGRHS2D(const Mesh2D& mesh,
                     const std::vector<int>& massPiv,
                     int nModesPerElem,
                     double time,
-                    BoundaryStateFunc bcFunc)
+                    const std::map<int, BoundaryStateFunc>& bcMap)
 {
     int nE    = mesh.nElements;
     int nqVol = nq1d * nq1d;
@@ -413,11 +413,14 @@ void computeDGRHS2D(const Mesh2D& mesh,
             else
             {
                 int fIdx = f * nqFace + q;
-                if (bcFunc)
+                double xf = geom.faceXPhys[fIdx];
+                double yf = geom.faceYPhys[fIdx];
+                double nx = geom.faceNx[fIdx];
+                double ny = geom.faceNy[fIdx];
+                auto it = bcMap.find(mesh.faces[f].bcTag);
+                if (it != bcMap.end())
                 {
-                    double xf = geom.faceXPhys[fIdx];
-                    double yf = geom.faceYPhys[fIdx];
-                    bcFunc(xf, yf, time, UR);
+                    it->second(UL, nx, ny, xf, yf, time, UR);
                 }
                 else
                 {
@@ -426,7 +429,6 @@ void computeDGRHS2D(const Mesh2D& mesh,
                 }
             }
 
-            // Compute numerical flux
             int fIdx = f * nqFace + q;
             double nx = geom.faceNx[fIdx];
             double ny = geom.faceNy[fIdx];

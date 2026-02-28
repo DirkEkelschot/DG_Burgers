@@ -33,6 +33,8 @@ struct Inputs2D {
     std::string timescheme  = "RK4";
     std::string meshfile;
     std::string testcase    = "IsentropicVortex";
+    double Mach             = 0.5;
+    double AoA              = 0.0;
 };
 
 void ParseEquals(const std::string &line, std::string &lhs,

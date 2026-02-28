@@ -219,6 +219,8 @@ Inputs2D* ReadXmlFile2D(const char* filename)
     if (param_map.count("TimeScheme"))       inp->timescheme = param_map["TimeScheme"];
     if (param_map.count("MeshFile"))         inp->meshfile   = param_map["MeshFile"];
     if (param_map.count("TestCase"))         inp->testcase   = param_map["TestCase"];
+    if (param_map.count("Mach"))             inp->Mach       = std::stod(param_map["Mach"]);
+    if (param_map.count("AoA"))              inp->AoA        = std::stod(param_map["AoA"]);
 
     if (inp->nquad == 0)
         inp->nquad = inp->porder + 1;
@@ -236,6 +238,8 @@ Inputs2D* ReadXmlFile2D(const char* filename)
     std::cout << "TimeScheme      = " << inp->timescheme << std::endl;
     std::cout << "MeshFile        = " << inp->meshfile   << std::endl;
     std::cout << "TestCase        = " << inp->testcase   << std::endl;
+    std::cout << "Mach            = " << inp->Mach       << std::endl;
+    std::cout << "AoA             = " << inp->AoA        << std::endl;
     std::cout << "===================================================" << std::endl;
 
     return inp;

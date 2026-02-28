@@ -6,6 +6,7 @@
 #include "basis_poly.h"
 #include <vector>
 #include <array>
+#include <map>
 #include <cmath>
 
 constexpr int NVAR2D = 4;   // rho, rho*u, rho*v, rho*E
@@ -43,9 +44,11 @@ void laxFriedrichsFlux2D(const double UL[NVAR2D], const double UR[NVAR2D],
                          double nx, double ny,
                          double Fnum[NVAR2D]);
 
-// Boundary condition callback: given (x, y, t), fill Ubc[NVAR2D]
-typedef void (*BoundaryStateFunc)(double x, double y, double t,
-                                  double Ubc[NVAR2D]);
+// Boundary condition callback: given interior state, outward normal, and position,
+// compute the ghost (exterior) state UR.
+typedef void (*BoundaryStateFunc)(const double UL[NVAR2D], double nx, double ny,
+                                  double x, double y, double t,
+                                  double UR[NVAR2D]);
 
 // Full DG RHS computation
 // U: solution stored as U[var][elem * nqVol + q]
@@ -64,7 +67,7 @@ void computeDGRHS2D(const Mesh2D& mesh,
                     const std::vector<int>& massPiv,
                     int nModesPerElem,
                     double time = 0.0,
-                    BoundaryStateFunc bcFunc = nullptr);
+                    const std::map<int, BoundaryStateFunc>& bcMap = {});
 
 // Assemble the per-element mass matrices into a block-diagonal structure
 // and LU-factor each block. Returns flat array and pivot array.

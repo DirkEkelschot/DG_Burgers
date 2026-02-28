@@ -7,6 +7,7 @@
 #include <string>
 #include <algorithm>
 #include <cstring>
+#include <map>
 
 #include "src/Polylib.h"
 #include "src/basis_poly.h"
@@ -77,10 +78,95 @@ static void isentropicVortexState(double x, double y, double t,
 
 static double g_currentTime = 0.0;
 
-static void isentropicVortexBC(double x, double y, double /*t*/,
-                               double Ubc[NVAR2D])
+static void isentropicVortexBC(const double /*UL*/[NVAR2D], double /*nx*/, double /*ny*/,
+                               double x, double y, double /*t*/,
+                               double UR[NVAR2D])
 {
-    isentropicVortex(x, y, g_currentTime, Ubc[0], Ubc[1], Ubc[2], Ubc[3]);
+    isentropicVortex(x, y, g_currentTime, UR[0], UR[1], UR[2], UR[3]);
+}
+
+// ============================================================================
+// Freestream state (globals set from input file before the time loop)
+// ============================================================================
+
+static double g_rhoInf, g_uInf, g_vInf, g_pInf;
+
+// ============================================================================
+// Slip wall boundary condition (inviscid wall -- reflect normal velocity)
+// ============================================================================
+
+static void slipWallBC(const double UL[NVAR2D], double nx, double ny,
+                       double /*x*/, double /*y*/, double /*t*/,
+                       double UR[NVAR2D])
+{
+    double rho = UL[0];
+    double u   = UL[1] / rho;
+    double v   = UL[2] / rho;
+    double Vn  = u * nx + v * ny;
+
+    UR[0] = rho;
+    UR[1] = rho * (u - 2.0 * Vn * nx);
+    UR[2] = rho * (v - 2.0 * Vn * ny);
+    UR[3] = UL[3];
+}
+
+// ============================================================================
+// Riemann invariant (characteristic) farfield boundary condition
+// ============================================================================
+
+static void riemannInvariantBC(const double UL[NVAR2D], double nx, double ny,
+                               double /*x*/, double /*y*/, double /*t*/,
+                               double UR[NVAR2D])
+{
+    const double gm1 = GAMMA - 1.0;
+
+    double rhoI = UL[0];
+    double uI   = UL[1] / rhoI;
+    double vI   = UL[2] / rhoI;
+    double pI   = pressure2D(UL[0], UL[1], UL[2], UL[3]);
+    double cI   = soundSpeed2D(rhoI, pI);
+    double VnI  = uI * nx + vI * ny;
+
+    double cInf  = std::sqrt(GAMMA * g_pInf / g_rhoInf);
+    double VnInf = g_uInf * nx + g_vInf * ny;
+
+    double Rplus, Rminus;
+    double sB, VtB_x, VtB_y;
+
+    if (VnI < 0.0)
+    {
+        // Inflow: one outgoing characteristic (R+) from interior,
+        //         all other info from freestream
+        Rplus  = VnI + 2.0 * cI / gm1;
+        Rminus = VnInf - 2.0 * cInf / gm1;
+        sB     = g_pInf / std::pow(g_rhoInf, GAMMA);
+        VtB_x  = g_uInf - VnInf * nx;
+        VtB_y  = g_vInf - VnInf * ny;
+    }
+    else
+    {
+        // Outflow: one incoming characteristic (R-) from freestream,
+        //          all other info from interior
+        Rplus  = VnI + 2.0 * cI / gm1;
+        Rminus = VnInf - 2.0 * cInf / gm1;
+        sB     = pI / std::pow(rhoI, GAMMA);
+        VtB_x  = uI - VnI * nx;
+        VtB_y  = vI - VnI * ny;
+    }
+
+    double VnB = 0.5 * (Rplus + Rminus);
+    double cB  = 0.25 * gm1 * (Rplus - Rminus);
+    if (cB < 1e-14) cB = 1e-14;
+
+    double rhoB = std::pow(cB * cB / (GAMMA * sB), 1.0 / gm1);
+    double uB   = VtB_x + VnB * nx;
+    double vB   = VtB_y + VnB * ny;
+    double pB   = rhoB * cB * cB / GAMMA;
+
+    UR[0] = rhoB;
+    UR[1] = rhoB * uB;
+    UR[2] = rhoB * vB;
+    UR[3] = pB / gm1 + 0.5 * rhoB * (uB * uB + vB * vB);
 }
 
 // ============================================================================
@@ -300,6 +386,16 @@ int main(int argc, char* argv[])
     for (int v = 0; v < NVAR2D; ++v)
         U[v].resize(totalDOF, 0.0);
 
+    // Set up freestream state from input parameters (used by Riemann invariant BC)
+    {
+        double AoA_rad = inp->AoA * M_PI / 180.0;
+        g_rhoInf = 1.0;
+        g_pInf   = 1.0 / (GAMMA * inp->Mach * inp->Mach);
+        double cInf = std::sqrt(GAMMA * g_pInf / g_rhoInf);
+        g_uInf = inp->Mach * cInf * std::cos(AoA_rad);
+        g_vInf = inp->Mach * cInf * std::sin(AoA_rad);
+    }
+
     if (inp->testcase == "IsentropicVortex")
     {
         for (int e = 0; e < nE; ++e)
@@ -316,6 +412,18 @@ int main(int argc, char* argv[])
                 U[2][idx] = rhov;
                 U[3][idx] = rhoE;
             }
+        }
+    }
+    else if (inp->testcase == "NACA0012")
+    {
+        double rhoE_inf = g_pInf / (GAMMA - 1.0)
+                        + 0.5 * g_rhoInf * (g_uInf * g_uInf + g_vInf * g_vInf);
+        for (int i = 0; i < totalDOF; ++i)
+        {
+            U[0][i] = g_rhoInf;
+            U[1][i] = g_rhoInf * g_uInf;
+            U[2][i] = g_rhoInf * g_vInf;
+            U[3][i] = rhoE_inf;
         }
     }
 
@@ -339,6 +447,22 @@ int main(int argc, char* argv[])
         Utmp[v].resize(totalDOF, 0.0);
     }
 
+    // ========================================================================
+    // Build boundary condition map
+    // ========================================================================
+    std::map<int, BoundaryStateFunc> bcMap;
+    if (inp->testcase == "IsentropicVortex")
+    {
+        for (auto& kv : mesh.bcFaces)
+            bcMap[kv.first] = isentropicVortexBC;
+    }
+    else if (inp->testcase == "NACA0012")
+    {
+        bcMap[1] = slipWallBC;          // Airfoil
+        bcMap[2] = riemannInvariantBC;  // Farfield
+        bcMap[3] = riemannInvariantBC;  // Wake
+    }
+
     double time = 0.0;
     bool nanFound = false;
     auto tStart = std::chrono::high_resolution_clock::now();
@@ -349,15 +473,11 @@ int main(int argc, char* argv[])
         if (CFL > 0.0)
             dt = computeDt_CFL(mesh, geom, U, nqVol, CFL, P);
 
-        BoundaryStateFunc bcFn = nullptr;
-        if (inp->testcase == "IsentropicVortex")
-            bcFn = isentropicVortexBC;
-
         // --- Stage 1 ---
         g_currentTime = time;
         computeDGRHS2D(mesh, geom, basis1D.get(), P, nq1d, nq1d,
                        wq, wq, zq, zq, U, R, massLU, massPiv, nmodes,
-                       time, bcFn);
+                       time, bcMap);
         for (int v = 0; v < NVAR2D; ++v)
             for (int i = 0; i < totalDOF; ++i)
             {
@@ -369,7 +489,7 @@ int main(int argc, char* argv[])
         g_currentTime = time + 0.5 * dt;
         computeDGRHS2D(mesh, geom, basis1D.get(), P, nq1d, nq1d,
                        wq, wq, zq, zq, Utmp, R, massLU, massPiv, nmodes,
-                       time + 0.5 * dt, bcFn);
+                       time + 0.5 * dt, bcMap);
         for (int v = 0; v < NVAR2D; ++v)
             for (int i = 0; i < totalDOF; ++i)
             {
@@ -380,7 +500,7 @@ int main(int argc, char* argv[])
         // --- Stage 3 ---
         computeDGRHS2D(mesh, geom, basis1D.get(), P, nq1d, nq1d,
                        wq, wq, zq, zq, Utmp, R, massLU, massPiv, nmodes,
-                       time + 0.5 * dt, bcFn);
+                       time + 0.5 * dt, bcMap);
         for (int v = 0; v < NVAR2D; ++v)
             for (int i = 0; i < totalDOF; ++i)
             {
@@ -392,7 +512,7 @@ int main(int argc, char* argv[])
         g_currentTime = time + dt;
         computeDGRHS2D(mesh, geom, basis1D.get(), P, nq1d, nq1d,
                        wq, wq, zq, zq, Utmp, R, massLU, massPiv, nmodes,
-                       time + dt, bcFn);
+                       time + dt, bcMap);
         for (int v = 0; v < NVAR2D; ++v)
             for (int i = 0; i < totalDOF; ++i)
             {
