@@ -159,6 +159,41 @@ void assembleAndFactorMassMatrices(
 }
 
 // ============================================================================
+// Mass matrix inverse (for GPU solver)
+// ============================================================================
+
+void computeMassInverse(
+    const std::vector<double>& massLU,
+    const std::vector<int>& massPiv,
+    int nE, int nmodes,
+    std::vector<double>& Minv)
+{
+    int blockSz = nmodes * nmodes;
+    Minv.assign(nE * blockSz, 0.0);
+
+    for (int e = 0; e < nE; ++e)
+    {
+        double* Mblock = &Minv[e * blockSz];
+        for (int i = 0; i < nmodes; ++i)
+            Mblock[i * nmodes + i] = 1.0;
+
+        std::vector<double> LUcopy(blockSz);
+        std::vector<int> pivCopy(nmodes);
+        std::memcpy(LUcopy.data(), &massLU[e * blockSz], blockSz * sizeof(double));
+        std::memcpy(pivCopy.data(), &massPiv[e * nmodes], nmodes * sizeof(int));
+
+        unsigned char TRANS = 'N';
+        int N = nmodes, NRHS = nmodes, LDA = nmodes, LDB = nmodes, INFO;
+        dgetrs_(&TRANS, &N, &NRHS, LUcopy.data(), &LDA,
+                pivCopy.data(), Mblock, &LDB, &INFO);
+
+        if (INFO != 0)
+            std::cerr << "Mass matrix inverse failed for element " << e
+                      << " INFO=" << INFO << std::endl;
+    }
+}
+
+// ============================================================================
 // Full DG RHS
 // ============================================================================
 

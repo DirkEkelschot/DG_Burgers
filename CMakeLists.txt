@@ -1,50 +1,51 @@
-cmake_minimum_required(VERSION 3.10 FATAL_ERROR)
-project(custom_ops)
+cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
+project(custom_ops LANGUAGES CXX)
 
+if(EXISTS "${CMAKE_SOURCE_DIR}/platforms_cmake/work_laptop.cmake")
+    include(platforms_cmake/work_laptop.cmake)
+endif()
 
-include(platforms_cmake/work_laptop.cmake)
+# 1D Solver (optional, requires LibTorch)
+find_package(Torch QUIET)
+if(Torch_FOUND)
+    list(APPEND CMAKE_PREFIX_PATH ${DEFAULT_BLAS_ROOT})
+    find_package(BLAS REQUIRED)
+    file(GLOB SRC CONFIGURE_DEPENDS "src/*.cpp" "1D-Euler-app.cpp")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wl,-no_compact_unwind")
+    add_executable(app ${SRC})
+    if(DEFAULT_BLAS_ROOT)
+        include_directories("${DEFAULT_BLAS_ROOT}/include")
+    endif()
+    target_link_libraries(app ${BLAS_LIBRARIES} "${TORCH_LIBRARIES}")
+    set_property(TARGET app PROPERTY CXX_STANDARD 17)
+endif()
 
-#find_package(LAPACK)
-#find_package(Boost COMPONENTS system filesystem REQUIRED)
-
-
-list(APPEND CMAKE_PREFIX_PATH ${DEFAULT_LIBTORCH_ROOT})
-find_package(Torch REQUIRED)
-
-list (APPEND CMAKE_PREFIX_PATH ${DEFAULT_BLAS_ROOT})
+# 2D Euler DG Solver with CUDA acceleration
+enable_language(CUDA)
+find_package(CUDAToolkit REQUIRED)
 find_package(BLAS REQUIRED)
-
-file(GLOB SRC CONFIGURE_DEPENDS "src/*.cpp" "1D-Euler-app.cpp")
-set(CMAKE_CXX_FLAGS "-Wl,-no_compact_unwind")
-add_executable(app ${SRC})
-
-
-
-include_directories("${DEFAULT_BLAS_ROOT}/include")
-target_link_libraries(app ${BLAS_LIBRARIES})
-
-
-target_link_libraries(app "${TORCH_LIBRARIES}")
-set_property(TARGET app PROPERTY CXX_STANDARD 17)
-
-# 2D Euler DG Solver (no LibTorch dependency)
 find_package(LAPACK REQUIRED)
-file(GLOB SRC2D CONFIGURE_DEPENDS
-    "src/Polylib.cpp"
-    "src/basis.cpp"
-    "src/basis_poly.cpp"
-    "src/basis_functions.cpp"
-    "src/io.cpp"
-    "src/tinyxml.cpp"
-    "src/tinyxmlerror.cpp"
-    "src/tinyxmlparser.cpp"
-    "src/tinystr.cpp"
-    "src/mesh2d.cpp"
-    "src/geom2d.cpp"
-    "src/euler2d.cpp"
-    "2D-Euler-app.cpp"
+
+add_executable(app2d
+    src/Polylib.cpp
+    src/basis.cpp
+    src/basis_poly.cpp
+    src/basis_functions.cpp
+    src/io.cpp
+    src/tinyxml.cpp
+    src/tinyxmlerror.cpp
+    src/tinyxmlparser.cpp
+    src/tinystr.cpp
+    src/mesh2d.cpp
+    src/geom2d.cpp
+    src/euler2d.cpp
+    src/euler2d_gpu.cu
+    2D-Euler-app.cpp
 )
-add_executable(app2d ${SRC2D})
-target_include_directories(app2d PRIVATE "${DEFAULT_BLAS_ROOT}/include")
+if(DEFAULT_BLAS_ROOT AND EXISTS "${DEFAULT_BLAS_ROOT}/include")
+    target_include_directories(app2d PRIVATE "${DEFAULT_BLAS_ROOT}/include")
+endif()
 target_link_libraries(app2d ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES})
 set_property(TARGET app2d PROPERTY CXX_STANDARD 17)
+set_property(TARGET app2d PROPERTY CUDA_STANDARD 17)
+set_target_properties(app2d PROPERTIES CUDA_ARCHITECTURES "90")

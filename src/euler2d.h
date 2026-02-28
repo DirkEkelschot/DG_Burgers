@@ -82,4 +82,11 @@ void assembleAndFactorMassMatrices(
     std::vector<double>& massLU,
     std::vector<int>& massPiv);
 
+// Compute dense M^{-1} from the LU-factored mass matrices (for GPU solver)
+void computeMassInverse(
+    const std::vector<double>& massLU,
+    const std::vector<int>& massPiv,
+    int nE, int nmodes,
+    std::vector<double>& Minv);
+
 #endif
