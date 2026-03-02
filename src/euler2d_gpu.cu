@@ -1728,6 +1728,14 @@ double gpuResidualNorm(GPUSolverData& gpu, ImplicitGPUData& imp)
     return gpuNorm2(gpu.d_R, imp.d_dotBuf, imp.N);
 }
 
+void gpuResidualNormPerVar(GPUSolverData& gpu, double norms[4])
+{
+    for (int v = 0; v < NVAR_GPU; v++) {
+        const double* ptr = gpu.d_R + (size_t)v * gpu.totalDOF;
+        norms[v] = gpuNorm2(ptr, gpu.d_dtMin, gpu.totalDOF);
+    }
+}
+
 // ============================================================================
 // Implicit solver: Assemble block-Jacobi preconditioner
 // ============================================================================
@@ -1762,7 +1770,7 @@ void gpuAssembleBlockJacobi(GPUSolverData& gpu, ImplicitGPUData& imp)
 
 int gpuImplicitStep(GPUSolverData& gpu, ImplicitGPUData& imp,
                     double gmresTol, int gmresMaxIter, double time,
-                    double& residualNorm)
+                    double& residualNorm, double* perVarNorms)
 {
     int N = imp.N;
     int m = min(gmresMaxIter, imp.maxKrylov);
@@ -1775,6 +1783,13 @@ int gpuImplicitStep(GPUSolverData& gpu, ImplicitGPUData& imp,
     imp.Unorm = gpuNorm2(gpu.d_U, imp.d_dotBuf, N);
     double beta = gpuNorm2(imp.d_R0, imp.d_dotBuf, N);
     residualNorm = beta;
+
+    if (perVarNorms) {
+        for (int v = 0; v < NVAR_GPU; v++) {
+            const double* ptr = imp.d_R0 + (size_t)v * gpu.totalDOF;
+            perVarNorms[v] = gpuNorm2(ptr, imp.d_dotBuf, gpu.totalDOF);
+        }
+    }
 
     if (beta < 1e-15) return 0;
 

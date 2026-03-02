@@ -126,9 +126,11 @@ void gpuRestoreSnapshot(GPUSolverData& gpu);
 void gpuImplicitAllocate(ImplicitGPUData& imp, const GPUSolverData& gpu, int maxKrylov);
 void gpuImplicitFree(ImplicitGPUData& imp);
 double gpuResidualNorm(GPUSolverData& gpu, ImplicitGPUData& imp);
+void gpuResidualNormPerVar(GPUSolverData& gpu, double norms[4]);
 void gpuAssembleBlockJacobi(GPUSolverData& gpu, ImplicitGPUData& imp);
 int gpuImplicitStep(GPUSolverData& gpu, ImplicitGPUData& imp,
                     double gmresTol, int gmresMaxIter, double time,
-                    double& residualNorm);
+                    double& residualNorm,
+                    double* perVarNorms = nullptr);
 
 #endif

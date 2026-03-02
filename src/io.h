@@ -46,6 +46,7 @@ struct Inputs2D {
     double adjTol           = 1e-10;
     double adjChordRef      = 1.0;
     bool   adjFDCheck       = false;
+    std::string adjObjective = "Lift";
 
     double implicitCFLMax   = 1e6;
     double implicitCFLGrowth= 1.5;

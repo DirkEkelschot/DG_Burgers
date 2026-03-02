@@ -239,6 +239,7 @@ Inputs2D* ReadXmlFile2D(const char* filename)
         std::string val = param_map["AdjointFDCheck"];
         inp->adjFDCheck = (val == "1" || val == "true" || val == "True");
     }
+    if (param_map.count("AdjointObjective")) inp->adjObjective = param_map["AdjointObjective"];
 
     if (param_map.count("ImplicitCFLMax"))    inp->implicitCFLMax   = std::stod(param_map["ImplicitCFLMax"]);
     if (param_map.count("ImplicitCFLGrowth")) inp->implicitCFLGrowth= std::stod(param_map["ImplicitCFLGrowth"]);
@@ -282,6 +283,7 @@ Inputs2D* ReadXmlFile2D(const char* filename)
     }
     if (!inp->restartfile.empty())
         std::cout << "RestartFile     = " << inp->restartfile << std::endl;
+    std::cout << "AdjObjective    = " << inp->adjObjective << std::endl;
     if (inp->checkpoint > 0)
         std::cout << "Checkpoint      = every " << inp->checkpoint << " steps" << std::endl;
     std::cout << "===================================================" << std::endl;

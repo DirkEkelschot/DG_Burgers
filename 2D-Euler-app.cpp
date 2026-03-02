@@ -617,13 +617,23 @@ int main(int argc, char* argv[])
 
         bool converged = false;
 
+        std::ofstream csvFile("residual_history.csv");
+        csvFile << "iter,rho,rhou,rhov,rhoE\n";
+
         for (int iter = 0; iter < nt && !nanFound && !converged; ++iter) {
             gpuSnapshotSolution(gpu);
             gpuComputeElementCFL(gpu, cfl, P);
 
             double resNorm;
+            double perVarNorms[4];
             int gmresIter = gpuImplicitStep(gpu, imp, gmresTol, gmresMax,
-                                            0.0, resNorm);
+                                            0.0, resNorm, perVarNorms);
+
+            csvFile << (iter + 1)
+                    << "," << perVarNorms[0]
+                    << "," << perVarNorms[1]
+                    << "," << perVarNorms[2]
+                    << "," << perVarNorms[3] << "\n";
 
             nanFound = gpuCheckNaN(gpu);
             if (nanFound) {
@@ -664,18 +674,25 @@ int main(int argc, char* argv[])
                 }
                 writeVTK(chkVtk, mesh, geom, U, Bmat, Bvis, Minv, wq, zVis, P, nq1d,
                          eps_chk, sensor_chk);
-                writeRestart("restart2d.bin", U, nE, nqVol, time);
+                std::string chkBin = "restart2d_" + std::to_string(iter + 1) + ".bin";
+                writeRestart(chkBin, U, nE, nqVol, time);
                 std::cout << "\nCheckpoint at iteration " << (iter + 1) << std::endl;
             }
 
             printProgressBar(iter + 1, nt);
         }
 
+        csvFile.close();
+        std::cout << "Residual history written to residual_history.csv" << std::endl;
+
         gpuImplicitFree(imp);
     } else {
         // ==================================================================
         // Explicit RK4 time integration
         // ==================================================================
+        std::ofstream csvFile("residual_history.csv");
+        csvFile << "step,time,rho,rhou,rhov,rhoE\n";
+
         for (int t_step = 0; t_step < nt && !nanFound; ++t_step)
         {
             gpuSnapshotSolution(gpu);
@@ -687,6 +704,15 @@ int main(int argc, char* argv[])
                 std::cout << "Step " << t_step << ": dt = " << dt << std::endl;
 
             gpuComputeDGRHS(gpu, false, time);
+
+            double perVarNorms[4];
+            gpuResidualNormPerVar(gpu, perVarNorms);
+            csvFile << t_step
+                    << "," << time
+                    << "," << perVarNorms[0]
+                    << "," << perVarNorms[1]
+                    << "," << perVarNorms[2]
+                    << "," << perVarNorms[3] << "\n";
             gpuRK4Stage(gpu, dt, 1);
 
             gpuComputeDGRHS(gpu, true, time + 0.5 * dt);
@@ -735,13 +761,17 @@ int main(int argc, char* argv[])
                 }
                 writeVTK(chkVtk, mesh, geom, U, Bmat, Bvis, Minv, wq, zVis, P, nq1d,
                          eps_chk, sensor_chk);
-                writeRestart("restart2d.bin", U, nE, nqVol, time);
+                std::string chkBin = "restart2d_" + std::to_string(t_step + 1) + ".bin";
+                writeRestart(chkBin, U, nE, nqVol, time);
                 std::cout << "\nCheckpoint at step " << t_step + 1
                           << " (time = " << time << ")" << std::endl;
             }
 
             printProgressBar(t_step + 1, nt);
         }
+
+        csvFile.close();
+        std::cout << "Residual history written to residual_history.csv" << std::endl;
     }
 
     auto tEnd = std::chrono::high_resolution_clock::now();
