@@ -85,7 +85,9 @@ static void writeVTK(const std::string& filename,
                      const std::vector<double>& Minv,
                      const std::vector<double>& wq,
                      const std::vector<double>& zVis,
-                     int P, int nq1d)
+                     int P, int nq1d,
+                     const std::vector<double>& epsilon = {},
+                     const std::vector<double>& sensor = {})
 {
     int nE = mesh.nElements;
     int nqVol = nq1d * nq1d;
@@ -175,30 +177,46 @@ static void writeVTK(const std::string& filename,
 
     out << "POINT_DATA " << totalPts << "\n";
 
-    out << "SCALARS Density double 1\nLOOKUP_TABLE default\n";
-    for (int i = 0; i < totalPts; ++i)
-        out << Uvis[0][i] << "\n";
-
-    out << "SCALARS VelocityMagnitude double 1\nLOOKUP_TABLE default\n";
-    for (int i = 0; i < totalPts; ++i)
-    {
-        double u = Uvis[1][i] / Uvis[0][i];
-        double v = Uvis[2][i] / Uvis[0][i];
-        out << std::sqrt(u * u + v * v) << "\n";
+    const char* varNames[4] = {"rho", "rhou", "rhov", "rhoE"};
+    for (int v = 0; v < NVAR2D; ++v) {
+        out << "SCALARS " << varNames[v] << " double 1\nLOOKUP_TABLE default\n";
+        for (int i = 0; i < totalPts; ++i)
+            out << Uvis[v][i] << "\n";
     }
 
     out << "SCALARS Pressure double 1\nLOOKUP_TABLE default\n";
-    for (int i = 0; i < totalPts; ++i)
-        out << pressure2D(Uvis[0][i], Uvis[1][i], Uvis[2][i], Uvis[3][i]) << "\n";
+    for (int i = 0; i < totalPts; ++i) {
+        double rho = std::max(Uvis[0][i], 1e-14);
+        double ke  = 0.5 * (Uvis[1][i]*Uvis[1][i] + Uvis[2][i]*Uvis[2][i]) / rho;
+        out << std::max((GAMMA - 1.0) * (Uvis[3][i] - ke), 1e-14) << "\n";
+    }
 
     out << "SCALARS Mach double 1\nLOOKUP_TABLE default\n";
     for (int i = 0; i < totalPts; ++i)
     {
-        double u = Uvis[1][i] / Uvis[0][i];
-        double v = Uvis[2][i] / Uvis[0][i];
-        double p = pressure2D(Uvis[0][i], Uvis[1][i], Uvis[2][i], Uvis[3][i]);
-        double c = soundSpeed2D(Uvis[0][i], p);
+        double rho = std::max(Uvis[0][i], 1e-14);
+        double u = Uvis[1][i] / rho;
+        double v = Uvis[2][i] / rho;
+        double ke = 0.5 * rho * (u * u + v * v);
+        double p  = std::max((GAMMA - 1.0) * (Uvis[3][i] - ke), 1e-14);
+        double c  = std::sqrt(GAMMA * p / rho);
         out << std::sqrt(u * u + v * v) / c << "\n";
+    }
+
+    if (!epsilon.empty()) {
+        out << "CELL_DATA " << nCells << "\n";
+        out << "SCALARS ArtificialViscosity double 1\nLOOKUP_TABLE default\n";
+        for (int e = 0; e < nE; ++e)
+            for (int ix = 0; ix < nSub; ++ix)
+                for (int iy = 0; iy < nSub; ++iy)
+                    out << epsilon[e] << "\n";
+        if (!sensor.empty()) {
+            out << "SCALARS ShockSensor double 1\nLOOKUP_TABLE default\n";
+            for (int e = 0; e < nE; ++e)
+                for (int ix = 0; ix < nSub; ++ix)
+                    for (int iy = 0; iy < nSub; ++iy)
+                        out << sensor[e] << "\n";
+        }
     }
 
     out.close();
@@ -207,6 +225,57 @@ static void writeVTK(const std::string& filename,
 // ============================================================================
 // Progress bar
 // ============================================================================
+
+// ============================================================================
+// Restart file I/O (binary, quadrature-point solution)
+// ============================================================================
+
+static void writeRestart(const std::string& filename,
+                         const std::vector<std::vector<double>>& U,
+                         int nE, int nqVol, double time)
+{
+    int totalDOF = nE * nqVol;
+    std::ofstream out(filename, std::ios::binary);
+    int nvar = NVAR2D;
+    out.write(reinterpret_cast<const char*>(&nvar), sizeof(int));
+    out.write(reinterpret_cast<const char*>(&nE), sizeof(int));
+    out.write(reinterpret_cast<const char*>(&nqVol), sizeof(int));
+    out.write(reinterpret_cast<const char*>(&time), sizeof(double));
+    for (int v = 0; v < NVAR2D; ++v)
+        out.write(reinterpret_cast<const char*>(U[v].data()), totalDOF * sizeof(double));
+    out.close();
+    std::cout << "Restart written to " << filename << " (time = " << time << ")" << std::endl;
+}
+
+static bool readRestart(const std::string& filename,
+                        std::vector<std::vector<double>>& U,
+                        int nE, int nqVol, double& time)
+{
+    int totalDOF = nE * nqVol;
+    std::ifstream in(filename, std::ios::binary);
+    if (!in.is_open()) {
+        std::cout << "Error: cannot open restart file " << filename << std::endl;
+        return false;
+    }
+    int nvar, nE_file, nqVol_file;
+    in.read(reinterpret_cast<char*>(&nvar), sizeof(int));
+    in.read(reinterpret_cast<char*>(&nE_file), sizeof(int));
+    in.read(reinterpret_cast<char*>(&nqVol_file), sizeof(int));
+    in.read(reinterpret_cast<char*>(&time), sizeof(double));
+    if (nvar != NVAR2D || nE_file != nE || nqVol_file != nqVol) {
+        std::cout << "Error: restart file mismatch (nvar=" << nvar
+                  << " nE=" << nE_file << " nqVol=" << nqVol_file
+                  << "), expected (4, " << nE << ", " << nqVol << ")" << std::endl;
+        return false;
+    }
+    for (int v = 0; v < NVAR2D; ++v) {
+        U[v].resize(totalDOF);
+        in.read(reinterpret_cast<char*>(U[v].data()), totalDOF * sizeof(double));
+    }
+    in.close();
+    std::cout << "Restart loaded from " << filename << " (time = " << time << ")" << std::endl;
+    return true;
+}
 
 static void printProgressBar(int current, int total, int width = 50)
 {
@@ -259,9 +328,9 @@ int main(int argc, char* argv[])
     // ========================================================================
     std::vector<double> zq(nq1d, 0.0), wq(nq1d, 0.0);
     if (inp->ptype == "GaussLegendre") {
-        zwgl(zq.data(), wq.data(), nq1d)
+        zwgl(zq.data(), wq.data(), nq1d);
     } else {
-        zwgll(zq.data(), wq.data(), nq1d)
+        zwgll(zq.data(), wq.data(), nq1d);
     }
 
     std::unique_ptr<BasisPoly> basis1D = BasisPoly::Create(inp->btype, P, inp->ptype, zq, wq);
@@ -381,6 +450,15 @@ int main(int argc, char* argv[])
             }
     }
 
+    // Load restart if specified
+    double time_restart = 0.0;
+    if (!inp->restartfile.empty()) {
+        if (!readRestart(inp->restartfile, U, nE, nqVol, time_restart)) {
+            std::cout << "Restart failed, exiting." << std::endl;
+            return 1;
+        }
+    }
+
     writeVTK("solution2d_init.vtk", mesh, geom, U, Bmat, Bvis, Minv, wq, zVis, P, nq1d);
 
     // ========================================================================
@@ -435,6 +513,12 @@ int main(int argc, char* argv[])
     gpu.uInf   = g_uInf;
     gpu.vInf   = g_vInf;
     gpu.pInf   = g_pInf;
+    gpu.fluxType = (inp->fluxtype == "HLLC") ? 1 : 0;
+    gpu.useAV    = inp->useAV;
+    gpu.AVkappa  = inp->AVkappa;
+    gpu.AVs0     = (inp->AVs0 != 0.0) ? inp->AVs0
+                   : -(4.25 * std::log10((double)std::max(P, 1)) + 0.5);
+    gpu.AVscale  = inp->AVscale;
 
     gpuCopyStaticData(gpu,
         geom.detJ.data(), geom.dxidx.data(), geom.dxidy.data(),
@@ -450,46 +534,214 @@ int main(int argc, char* argv[])
 
     gpuCopySolutionToDevice(gpu, U_flat.data());
 
+    // Nodal-to-modal transform for shock sensor
+    {
+        int P1 = P + 1;
+        std::vector<double> T(P1 * P1, 0.0);
+        if (inp->btype == "Modal") {
+            for (int i = 0; i < P1; ++i) T[i * P1 + i] = 1.0;
+        } else {
+            std::vector<double> zn = basis1D->GetZn();
+            std::vector<double> V(P1 * P1);
+            for (int n = 0; n < P1; ++n)
+                for (int p = 0; p < P1; ++p) {
+                    double val;
+                    polylib::jacobfd(1, &zn[n], &val, NULL, p, 0.0, 0.0);
+                    V[n * P1 + p] = val;
+                }
+            std::vector<double> aug(P1 * 2 * P1);
+            for (int r = 0; r < P1; ++r)
+                for (int c = 0; c < P1; ++c) {
+                    aug[r * 2 * P1 + c] = V[r * P1 + c];
+                    aug[r * 2 * P1 + P1 + c] = (r == c) ? 1.0 : 0.0;
+                }
+            for (int col = 0; col < P1; ++col) {
+                int pivot = col;
+                for (int r = col + 1; r < P1; ++r)
+                    if (std::fabs(aug[r * 2*P1 + col]) > std::fabs(aug[pivot * 2*P1 + col]))
+                        pivot = r;
+                if (pivot != col)
+                    for (int c = 0; c < 2 * P1; ++c)
+                        std::swap(aug[col * 2*P1 + c], aug[pivot * 2*P1 + c]);
+                double diagInv = 1.0 / aug[col * 2*P1 + col];
+                for (int c = 0; c < 2 * P1; ++c)
+                    aug[col * 2*P1 + c] *= diagInv;
+                for (int r = 0; r < P1; ++r) {
+                    if (r == col) continue;
+                    double f = aug[r * 2*P1 + col];
+                    for (int c = 0; c < 2 * P1; ++c)
+                        aug[r * 2*P1 + c] -= f * aug[col * 2*P1 + c];
+                }
+            }
+            for (int r = 0; r < P1; ++r)
+                for (int c = 0; c < P1; ++c)
+                    T[r * P1 + c] = aug[r * 2*P1 + P1 + c];
+        }
+        gpuSetNodalToModal(T.data(), P1);
+    }
+
     std::cout << "GPU initialised: " << nE << " elements, P=" << P
               << ", nq1d=" << nq1d << ", nmodes=" << nmodes
               << ", totalDOF=" << totalDOF << std::endl;
 
     // ========================================================================
-    // RK4 time integration on GPU
+    // Time integration on GPU
     // ========================================================================
-    double time = 0.0;
+    double time = time_restart;
     bool nanFound = false;
     auto tStart = std::chrono::high_resolution_clock::now();
 
-    for (int t_step = 0; t_step < nt && !nanFound; ++t_step)
-    {
-        if (CFL > 0.0)
-            dt = gpuComputeCFL(gpu, CFL, P);
+    bool useImplicit = (inp->timescheme == "Implicit");
 
-        if (t_step < 5)
-            std::cout << "Step " << t_step << ": dt = " << dt << std::endl;
+    if (useImplicit) {
+        // ==================================================================
+        // Implicit (backward Euler + preconditioned GMRES) steady-state
+        // ==================================================================
+        ImplicitGPUData imp;
+        gpuImplicitAllocate(imp, gpu, inp->gmresRestart);
 
-        gpuComputeDGRHS(gpu, false, time);
-        gpuRK4Stage(gpu, dt, 1);
+        double cfl       = CFL;
+        double cflMax    = inp->implicitCFLMax;
+        double cflGrowth = inp->implicitCFLGrowth;
+        double implTol   = inp->implicitTol;
+        int    gmresMax  = inp->gmresMaxIter;
+        double gmresTol  = inp->gmresTol;
 
-        gpuComputeDGRHS(gpu, true, time + 0.5 * dt);
-        gpuRK4Stage(gpu, dt, 2);
+        std::cout << "\nImplicit pseudo-time iteration (block-Jacobi preconditioned GMRES):" << std::endl;
+        std::cout << "  CFL: " << cfl << " -> " << cflMax
+                  << " (growth=" << cflGrowth << ")" << std::endl;
+        std::cout << "  GMRES restart=" << inp->gmresRestart
+                  << " maxIter=" << gmresMax
+                  << " tol=" << gmresTol << std::endl;
+        std::cout << "  Convergence tolerance: " << implTol << std::endl;
 
-        gpuComputeDGRHS(gpu, true, time + 0.5 * dt);
-        gpuRK4Stage(gpu, dt, 3);
+        bool converged = false;
 
-        gpuComputeDGRHS(gpu, true, time + dt);
-        gpuRK4Stage(gpu, dt, 4);
+        for (int iter = 0; iter < nt && !nanFound && !converged; ++iter) {
+            gpuSnapshotSolution(gpu);
+            gpuComputeElementCFL(gpu, cfl, P);
 
-        time += dt;
+            double resNorm;
+            int gmresIter = gpuImplicitStep(gpu, imp, gmresTol, gmresMax,
+                                            0.0, resNorm);
 
-        if (t_step < 10 || (t_step + 1) % 500 == 0) {
             nanFound = gpuCheckNaN(gpu);
-            if (nanFound)
-                std::cout << "\nNaN first detected at step " << t_step << std::endl;
+            if (nanFound) {
+                gpuRestoreSnapshot(gpu);
+                cfl /= 10.0;
+                nanFound = false;
+                std::cout << "\nNaN detected at iter " << (iter + 1)
+                          << ", rolling back. CFL -> " << cfl << std::endl;
+                continue;
+            }
+
+            if ((iter + 1) % 10 == 0 || iter < 5 || resNorm < implTol) {
+                std::cout << "Implicit iter " << std::setw(6) << (iter + 1)
+                          << "  CFL=" << std::scientific << std::setprecision(2) << cfl
+                          << "  |res|=" << resNorm
+                          << "  GMRES: " << gmresIter << " iters"
+                          << std::endl;
+            }
+
+            if (resNorm < implTol) {
+                converged = true;
+                std::cout << "Converged at iteration " << (iter + 1) << std::endl;
+            }
+
+            cfl = std::min(cfl * cflGrowth, cflMax);
+
+            if (inp->checkpoint > 0 && (iter + 1) % inp->checkpoint == 0 && !nanFound) {
+                gpuCopySolutionToHost(gpu, U_flat.data());
+                for (int v = 0; v < NVAR2D; ++v)
+                    std::memcpy(U[v].data(), &U_flat[v * totalDOF], totalDOF * sizeof(double));
+
+                std::string chkVtk = "checkpoint_" + std::to_string(iter + 1) + ".vtk";
+                std::vector<double> eps_chk, sensor_chk;
+                if (gpu.useAV) {
+                    eps_chk.resize(nE); sensor_chk.resize(nE);
+                    gpuCopyEpsilonToHost(gpu, eps_chk.data());
+                    gpuCopySensorToHost(gpu, sensor_chk.data());
+                }
+                writeVTK(chkVtk, mesh, geom, U, Bmat, Bvis, Minv, wq, zVis, P, nq1d,
+                         eps_chk, sensor_chk);
+                writeRestart("restart2d.bin", U, nE, nqVol, time);
+                std::cout << "\nCheckpoint at iteration " << (iter + 1) << std::endl;
+            }
+
+            printProgressBar(iter + 1, nt);
         }
 
-        printProgressBar(t_step + 1, nt);
+        gpuImplicitFree(imp);
+    } else {
+        // ==================================================================
+        // Explicit RK4 time integration
+        // ==================================================================
+        for (int t_step = 0; t_step < nt && !nanFound; ++t_step)
+        {
+            gpuSnapshotSolution(gpu);
+
+            if (CFL > 0.0)
+                dt = gpuComputeCFL(gpu, CFL, P);
+
+            if (t_step < 5)
+                std::cout << "Step " << t_step << ": dt = " << dt << std::endl;
+
+            gpuComputeDGRHS(gpu, false, time);
+            gpuRK4Stage(gpu, dt, 1);
+
+            gpuComputeDGRHS(gpu, true, time + 0.5 * dt);
+            gpuRK4Stage(gpu, dt, 2);
+
+            gpuComputeDGRHS(gpu, true, time + 0.5 * dt);
+            gpuRK4Stage(gpu, dt, 3);
+
+            gpuComputeDGRHS(gpu, true, time + dt);
+            gpuRK4Stage(gpu, dt, 4);
+
+            time += dt;
+
+            nanFound = gpuCheckNaN(gpu);
+            if (nanFound) {
+                std::cout << "\nNaN first detected at step " << t_step << std::endl;
+
+                gpuCopyPrevSolutionToHost(gpu, U_flat.data());
+                for (int v = 0; v < NVAR2D; ++v)
+                    std::memcpy(U[v].data(), &U_flat[v * totalDOF], totalDOF * sizeof(double));
+
+                std::vector<double> eps_nan, sensor_nan;
+                if (gpu.useAV) {
+                    eps_nan.resize(nE);
+                    sensor_nan.resize(nE);
+                    gpuCopyEpsilonToHost(gpu, eps_nan.data());
+                    gpuCopySensorToHost(gpu, sensor_nan.data());
+                }
+                writeVTK("solution2d_prenan.vtk", mesh, geom, U, Bmat, Bvis,
+                         Minv, wq, zVis, P, nq1d, eps_nan, sensor_nan);
+                std::cout << "Pre-NaN solution written to solution2d_prenan.vtk" << std::endl;
+            }
+
+            if (inp->checkpoint > 0 && (t_step + 1) % inp->checkpoint == 0 && !nanFound) {
+                gpuCopySolutionToHost(gpu, U_flat.data());
+                for (int v = 0; v < NVAR2D; ++v)
+                    std::memcpy(U[v].data(), &U_flat[v * totalDOF], totalDOF * sizeof(double));
+
+                std::string chkVtk = "checkpoint_" + std::to_string(t_step + 1) + ".vtk";
+                std::vector<double> eps_chk, sensor_chk;
+                if (gpu.useAV) {
+                    eps_chk.resize(nE);
+                    sensor_chk.resize(nE);
+                    gpuCopyEpsilonToHost(gpu, eps_chk.data());
+                    gpuCopySensorToHost(gpu, sensor_chk.data());
+                }
+                writeVTK(chkVtk, mesh, geom, U, Bmat, Bvis, Minv, wq, zVis, P, nq1d,
+                         eps_chk, sensor_chk);
+                writeRestart("restart2d.bin", U, nE, nqVol, time);
+                std::cout << "\nCheckpoint at step " << t_step + 1
+                          << " (time = " << time << ")" << std::endl;
+            }
+
+            printProgressBar(t_step + 1, nt);
+        }
     }
 
     auto tEnd = std::chrono::high_resolution_clock::now();
@@ -553,8 +805,19 @@ int main(int argc, char* argv[])
     // ========================================================================
     // Write final solution
     // ========================================================================
-    writeVTK("solution2d_final.vtk", mesh, geom, U, Bmat, Bvis, Minv, wq, zVis, P, nq1d);
+    std::vector<double> eps_host, sensor_host;
+    if (gpu.useAV) {
+        eps_host.resize(nE);
+        sensor_host.resize(nE);
+        gpuCopyEpsilonToHost(gpu, eps_host.data());
+        gpuCopySensorToHost(gpu, sensor_host.data());
+    }
+    writeVTK("solution2d_final.vtk", mesh, geom, U, Bmat, Bvis, Minv, wq, zVis, P, nq1d,
+             eps_host, sensor_host);
     std::cout << "Output written to solution2d_init.vtk, solution2d_final.vtk" << std::endl;
+
+    if (!nanFound)
+        writeRestart("restart2d.bin", U, nE, nqVol, time);
 
     gpuFree(gpu);
     delete inp;

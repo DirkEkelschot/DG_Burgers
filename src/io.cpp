@@ -221,6 +221,31 @@ Inputs2D* ReadXmlFile2D(const char* filename)
     if (param_map.count("TestCase"))         inp->testcase   = param_map["TestCase"];
     if (param_map.count("Mach"))             inp->Mach       = std::stod(param_map["Mach"]);
     if (param_map.count("AoA"))              inp->AoA        = std::stod(param_map["AoA"]);
+    if (param_map.count("RestartFile"))      inp->restartfile = param_map["RestartFile"];
+    if (param_map.count("FluxType"))         inp->fluxtype   = param_map["FluxType"];
+    if (param_map.count("CheckpointInterval")) inp->checkpoint = std::stoi(param_map["CheckpointInterval"]);
+    if (param_map.count("ArtificialViscosity")) {
+        std::string val = param_map["ArtificialViscosity"];
+        inp->useAV = (val == "1" || val == "true" || val == "True" || val == "PerssonPeraire");
+    }
+    if (param_map.count("AVs0"))             inp->AVs0       = std::stod(param_map["AVs0"]);
+    if (param_map.count("AVkappa"))          inp->AVkappa    = std::stod(param_map["AVkappa"]);
+    if (param_map.count("AVscale"))          inp->AVscale    = std::stod(param_map["AVscale"]);
+
+    if (param_map.count("AdjointMaxIter"))   inp->adjMaxIter   = std::stoi(param_map["AdjointMaxIter"]);
+    if (param_map.count("AdjointTolerance")) inp->adjTol       = std::stod(param_map["AdjointTolerance"]);
+    if (param_map.count("AdjointChordRef"))  inp->adjChordRef  = std::stod(param_map["AdjointChordRef"]);
+    if (param_map.count("AdjointFDCheck")) {
+        std::string val = param_map["AdjointFDCheck"];
+        inp->adjFDCheck = (val == "1" || val == "true" || val == "True");
+    }
+
+    if (param_map.count("ImplicitCFLMax"))    inp->implicitCFLMax   = std::stod(param_map["ImplicitCFLMax"]);
+    if (param_map.count("ImplicitCFLGrowth")) inp->implicitCFLGrowth= std::stod(param_map["ImplicitCFLGrowth"]);
+    if (param_map.count("ImplicitTol"))       inp->implicitTol      = std::stod(param_map["ImplicitTol"]);
+    if (param_map.count("GMRESRestart"))      inp->gmresRestart     = std::stoi(param_map["GMRESRestart"]);
+    if (param_map.count("GMRESMaxIter"))      inp->gmresMaxIter     = std::stoi(param_map["GMRESMaxIter"]);
+    if (param_map.count("GMRESTol"))          inp->gmresTol         = std::stod(param_map["GMRESTol"]);
 
     if (inp->nquad == 0)
         inp->nquad = inp->porder + 1;
@@ -240,6 +265,25 @@ Inputs2D* ReadXmlFile2D(const char* filename)
     std::cout << "TestCase        = " << inp->testcase   << std::endl;
     std::cout << "Mach            = " << inp->Mach       << std::endl;
     std::cout << "AoA             = " << inp->AoA        << std::endl;
+    std::cout << "FluxType        = " << inp->fluxtype  << std::endl;
+    std::cout << "ArtificialVisc  = " << (inp->useAV ? "ON" : "OFF") << std::endl;
+    if (inp->useAV) {
+        std::cout << "AVs0            = " << (inp->AVs0 == 0.0 ? "auto" : std::to_string(inp->AVs0)) << std::endl;
+        std::cout << "AVkappa         = " << inp->AVkappa   << std::endl;
+        std::cout << "AVscale         = " << inp->AVscale   << std::endl;
+    }
+    if (inp->timescheme == "Implicit") {
+        std::cout << "ImplicitCFLMax  = " << inp->implicitCFLMax  << std::endl;
+        std::cout << "ImplicitCFLGrw  = " << inp->implicitCFLGrowth << std::endl;
+        std::cout << "ImplicitTol     = " << inp->implicitTol     << std::endl;
+        std::cout << "GMRESRestart    = " << inp->gmresRestart    << std::endl;
+        std::cout << "GMRESMaxIter    = " << inp->gmresMaxIter    << std::endl;
+        std::cout << "GMRESTol        = " << inp->gmresTol        << std::endl;
+    }
+    if (!inp->restartfile.empty())
+        std::cout << "RestartFile     = " << inp->restartfile << std::endl;
+    if (inp->checkpoint > 0)
+        std::cout << "Checkpoint      = every " << inp->checkpoint << " steps" << std::endl;
     std::cout << "===================================================" << std::endl;
 
     return inp;

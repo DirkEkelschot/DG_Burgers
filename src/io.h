@@ -35,6 +35,24 @@ struct Inputs2D {
     std::string testcase    = "IsentropicVortex";
     double Mach             = 0.5;
     double AoA              = 0.0;
+    std::string restartfile;
+    std::string fluxtype    = "LaxFriedrichs";
+    int checkpoint          = 0;
+    bool   useAV            = false;
+    double AVs0             = 0.0;
+    double AVkappa          = 1.0;
+    double AVscale          = 1.0;
+    int    adjMaxIter       = 10000;
+    double adjTol           = 1e-10;
+    double adjChordRef      = 1.0;
+    bool   adjFDCheck       = false;
+
+    double implicitCFLMax   = 1e6;
+    double implicitCFLGrowth= 1.5;
+    double implicitTol      = 1e-12;
+    int    gmresRestart     = 30;
+    int    gmresMaxIter     = 100;
+    double gmresTol         = 0.01;
 };
 
 void ParseEquals(const std::string &line, std::string &lhs,

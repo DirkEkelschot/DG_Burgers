@@ -565,9 +565,9 @@ int main(int argc, char* argv[])
             for(int i=0;i<(Nel*nq);i++)
             {
                 // std::cout << "R_DG0[0][i] " << R_DG0[0][i] << " " << R_DG0[1][i] << " " << R_DG0[2][i] << std::endl; 
-                k1_input[0][i]  = U_DG[0][i]+dt*R_DG0[0][i];
-                k1_input[1][i]  = U_DG[1][i]+dt*R_DG0[1][i];
-                k1_input[2][i]  = U_DG[2][i]+dt*R_DG0[2][i];
+                k1_input[0][i]  = U_DG[0][i]+0.5*dt*R_DG0[0][i];
+                k1_input[1][i]  = U_DG[1][i]+0.5*dt*R_DG0[1][i];
+                k1_input[2][i]  = U_DG[2][i]+0.5*dt*R_DG0[2][i];
 
 
                 k1[0][i] = dt*R_DG0[0][i];
@@ -586,9 +586,9 @@ int main(int argc, char* argv[])
             for(int i=0;i<(Nel*nq);i++)
             {
                 // std::cout << "R_DG0[0][i] " << R_DG0[0][i] << " " << R_DG0[1][i] << " " << R_DG0[2][i] << std::endl; 
-                k2_input[0][i]  = U_DG[0][i]+dt*R_DG1[0][i];
-                k2_input[1][i]  = U_DG[1][i]+dt*R_DG1[1][i];
-                k2_input[2][i]  = U_DG[2][i]+dt*R_DG1[2][i];
+                k2_input[0][i]  = U_DG[0][i]+0.5*dt*R_DG1[0][i];
+                k2_input[1][i]  = U_DG[1][i]+0.5*dt*R_DG1[1][i];
+                k2_input[2][i]  = U_DG[2][i]+0.5*dt*R_DG1[2][i];
 
 
                 k2[0][i] = dt*R_DG1[0][i];

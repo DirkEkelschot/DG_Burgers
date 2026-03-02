@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <set>
 #include <cassert>
+#include <cmath>
 
 // Local face numbering for a quad (CCW node ordering 0-1-2-3):
 //   face 0: nodes 0-1 (bottom,  eta = -1)
@@ -115,6 +116,8 @@ void Mesh2D::readGmsh(const std::string& filename)
               << nElements << " quad elements, "
               << boundaryEdgeTag.size() << " boundary edges" << std::endl;
 
+    mergeCoincidentNodes(1e-10, boundaryEdgeTag);
+
     buildFaces();
 
     // Assign boundary tags from the line elements
@@ -178,4 +181,44 @@ void Mesh2D::buildFaces()
 
     nFaces = static_cast<int>(faces.size());
     std::cout << "Mesh2D: built " << nFaces << " faces" << std::endl;
+}
+
+void Mesh2D::mergeCoincidentNodes(double tol,
+    std::map<std::array<int,2>, int>& boundaryEdgeTag)
+{
+    double scale = 1.0 / std::max(tol, 1e-15);
+
+    std::map<std::pair<long long, long long>, int> posMap;
+    std::vector<int> nodeMap(nNodes);
+    int nMerged = 0;
+
+    for (int i = 0; i < nNodes; ++i) {
+        long long qx = std::llround(nodes[i][0] * scale);
+        long long qy = std::llround(nodes[i][1] * scale);
+        auto key = std::make_pair(qx, qy);
+
+        auto it = posMap.find(key);
+        if (it != posMap.end()) {
+            nodeMap[i] = it->second;
+            nMerged++;
+        } else {
+            posMap[key] = i;
+            nodeMap[i] = i;
+        }
+    }
+
+    if (nMerged == 0) return;
+
+    for (auto& elem : elements)
+        for (auto& n : elem)
+            n = nodeMap[n];
+
+    std::map<std::array<int,2>, int> newBET;
+    for (auto& [key, tag] : boundaryEdgeTag) {
+        auto nk = sortedEdge(nodeMap[key[0]], nodeMap[key[1]]);
+        newBET[nk] = tag;
+    }
+    boundaryEdgeTag = std::move(newBET);
+
+    std::cout << "Mesh2D: merged " << nMerged << " coincident nodes" << std::endl;
 }

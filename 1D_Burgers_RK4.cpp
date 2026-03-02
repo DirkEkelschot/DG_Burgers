@@ -533,7 +533,7 @@ int main(int argc, char* argv[])
             for(int i=0;i<(Nel*np);i++)
             {
                 k1[i] = dt*R_DG0[i];
-                k1input[i] = U_DG[i]+dt*R_DG0[i];
+                k1input[i] = U_DG[i]+0.5*dt*R_DG0[i];
             }
             //Calculate Stage 2;
             CalculateRHS(np, nq, Nel, P, zq, wq, z, D, Jac, map, bc, X_DG, k1input, R_DG1,dt);
@@ -547,7 +547,7 @@ int main(int argc, char* argv[])
             for(int i=0;i<(Nel*np);i++)
             {
                 k3[i] = dt*R_DG2[i];
-                k3input[i] = U_DG[i]+dt*R_DG2[i]*0.5;
+                k3input[i] = U_DG[i]+dt*R_DG2[i];
             }
             //Calculate Stage 4;
             CalculateRHS(np, nq, Nel, P, zq, wq, z, D, Jac, map, bc, X_DG, k3input, R_DG3,dt);
