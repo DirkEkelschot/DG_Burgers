@@ -62,6 +62,9 @@ struct GPUSolverData {
     // NaN flag
     int* d_nanFlag;     // [1]
 
+    // Fused per-variable residual norm scratch
+    double* d_normBuf;  // [4]
+
     // Freestream state (for boundary conditions)
     double rhoInf, uInf, vInf, pInf;
 
@@ -122,6 +125,7 @@ void gpuCopySensorToHost(GPUSolverData& gpu, double* sensor_host);
 void gpuSnapshotSolution(GPUSolverData& gpu);
 void gpuCopyPrevSolutionToHost(GPUSolverData& gpu, double* U_flat);
 void gpuRestoreSnapshot(GPUSolverData& gpu);
+void gpuResidualNormPerVarFused(GPUSolverData& gpu, double norms[4]);
 
 void gpuImplicitAllocate(ImplicitGPUData& imp, const GPUSolverData& gpu, int maxKrylov);
 void gpuImplicitFree(ImplicitGPUData& imp);

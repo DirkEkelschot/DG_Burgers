@@ -223,6 +223,149 @@ static void writeVTK(const std::string& filename,
 }
 
 // ============================================================================
+// VTK output at actual solution (quadrature) points
+// ============================================================================
+
+static void writeVTK_solpts(const std::string& filename,
+                            const Mesh2D& mesh,
+                            const GeomData2D& geom,
+                            const std::vector<std::vector<double>>& U,
+                            const std::vector<double>& zq,
+                            int nq1d,
+                            const std::string& ptype,
+                            const std::vector<double>& epsilon = {},
+                            const std::vector<double>& sensor = {})
+{
+    int nE    = mesh.nElements;
+    int nqVol = nq1d * nq1d;
+
+    bool needAug = (ptype == "GaussLegendre");
+    int nAug    = needAug ? nq1d + 2 : nq1d;
+    int nAugVol = nAug * nAug;
+
+    // Build augmented 1D point set and interpolation matrix Interp[nAug x nq1d]
+    std::vector<double> zAug(nAug);
+    std::vector<double> Interp(nAug * nq1d, 0.0);
+
+    if (needAug) {
+        zAug[0] = -1.0;
+        for (int k = 0; k < nq1d; ++k) zAug[k + 1] = zq[k];
+        zAug[nAug - 1] = 1.0;
+
+        // Interior rows: identity mapping
+        for (int k = 0; k < nq1d; ++k)
+            Interp[(k + 1) * nq1d + k] = 1.0;
+
+        // Boundary rows: Lagrange interpolation weights
+        std::vector<double> zq_mut(zq);
+        for (int k = 0; k < nq1d; ++k) {
+            Interp[0 * nq1d + k]          = polylib::hgj(k, -1.0, zq_mut.data(), nq1d, 0.0, 0.0);
+            Interp[(nAug - 1) * nq1d + k] = polylib::hgj(k,  1.0, zq_mut.data(), nq1d, 0.0, 0.0);
+        }
+    } else {
+        for (int k = 0; k < nq1d; ++k) zAug[k] = zq[k];
+        for (int k = 0; k < nq1d; ++k) Interp[k * nq1d + k] = 1.0;
+    }
+
+    int totalPts = nE * nAugVol;
+
+    // Compute physical coordinates and interpolated solution at augmented points
+    std::vector<double> xPts(totalPts), yPts(totalPts);
+    std::vector<std::vector<double>> Uaug(NVAR2D, std::vector<double>(totalPts));
+
+    for (int e = 0; e < nE; ++e)
+        for (int i = 0; i < nAug; ++i)
+            for (int j = 0; j < nAug; ++j) {
+                int idx = e * nAugVol + i * nAug + j;
+                refToPhys(mesh, e, zAug[i], zAug[j], xPts[idx], yPts[idx]);
+
+                for (int v = 0; v < NVAR2D; ++v) {
+                    double val = 0.0;
+                    for (int a = 0; a < nq1d; ++a)
+                        for (int b = 0; b < nq1d; ++b)
+                            val += Interp[i * nq1d + a] * Interp[j * nq1d + b]
+                                 * U[v][e * nqVol + a * nq1d + b];
+                    Uaug[v][idx] = val;
+                }
+            }
+
+    // Write VTK
+    std::ofstream out(filename);
+    out << "# vtk DataFile Version 3.0\n";
+    out << "2D Euler DG Solution at quadrature points\n";
+    out << "ASCII\n";
+    out << "DATASET UNSTRUCTURED_GRID\n";
+
+    out << "POINTS " << totalPts << " double\n";
+    for (int i = 0; i < totalPts; ++i)
+        out << xPts[i] << " " << yPts[i] << " 0.0\n";
+
+    int nSub   = nAug - 1;
+    int nCells = nE * nSub * nSub;
+    out << "CELLS " << nCells << " " << nCells * 5 << "\n";
+    for (int e = 0; e < nE; ++e) {
+        int base = e * nAugVol;
+        for (int ix = 0; ix < nSub; ++ix)
+            for (int iy = 0; iy < nSub; ++iy) {
+                int p0 = base + ix       * nAug + iy;
+                int p1 = base + (ix + 1) * nAug + iy;
+                int p2 = base + (ix + 1) * nAug + (iy + 1);
+                int p3 = base + ix       * nAug + (iy + 1);
+                out << "4 " << p0 << " " << p1 << " " << p2 << " " << p3 << "\n";
+            }
+    }
+
+    out << "CELL_TYPES " << nCells << "\n";
+    for (int i = 0; i < nCells; ++i)
+        out << "9\n";
+
+    out << "POINT_DATA " << totalPts << "\n";
+
+    const char* varNames[4] = {"rho", "rhou", "rhov", "rhoE"};
+    for (int v = 0; v < NVAR2D; ++v) {
+        out << "SCALARS " << varNames[v] << " double 1\nLOOKUP_TABLE default\n";
+        for (int i = 0; i < totalPts; ++i)
+            out << Uaug[v][i] << "\n";
+    }
+
+    out << "SCALARS Pressure double 1\nLOOKUP_TABLE default\n";
+    for (int i = 0; i < totalPts; ++i) {
+        double rho = std::max(Uaug[0][i], 1e-14);
+        double ke  = 0.5 * (Uaug[1][i]*Uaug[1][i] + Uaug[2][i]*Uaug[2][i]) / rho;
+        out << std::max((GAMMA - 1.0) * (Uaug[3][i] - ke), 1e-14) << "\n";
+    }
+
+    out << "SCALARS Mach double 1\nLOOKUP_TABLE default\n";
+    for (int i = 0; i < totalPts; ++i) {
+        double rho = std::max(Uaug[0][i], 1e-14);
+        double u   = Uaug[1][i] / rho;
+        double v   = Uaug[2][i] / rho;
+        double ke  = 0.5 * rho * (u * u + v * v);
+        double p   = std::max((GAMMA - 1.0) * (Uaug[3][i] - ke), 1e-14);
+        double c   = std::sqrt(GAMMA * p / rho);
+        out << std::sqrt(u * u + v * v) / c << "\n";
+    }
+
+    if (!epsilon.empty()) {
+        out << "CELL_DATA " << nCells << "\n";
+        out << "SCALARS ArtificialViscosity double 1\nLOOKUP_TABLE default\n";
+        for (int e = 0; e < nE; ++e)
+            for (int ix = 0; ix < nSub; ++ix)
+                for (int iy = 0; iy < nSub; ++iy)
+                    out << epsilon[e] << "\n";
+        if (!sensor.empty()) {
+            out << "SCALARS ShockSensor double 1\nLOOKUP_TABLE default\n";
+            for (int e = 0; e < nE; ++e)
+                for (int ix = 0; ix < nSub; ++ix)
+                    for (int iy = 0; iy < nSub; ++iy)
+                        out << sensor[e] << "\n";
+        }
+    }
+
+    out.close();
+}
+
+// ============================================================================
 // Progress bar
 // ============================================================================
 
@@ -232,7 +375,7 @@ static void writeVTK(const std::string& filename,
 
 static void writeRestart(const std::string& filename,
                          const std::vector<std::vector<double>>& U,
-                         int nE, int nqVol, double time)
+                         int nE, int nqVol, double time, int iterCount = 0)
 {
     int totalDOF = nE * nqVol;
     std::ofstream out(filename, std::ios::binary);
@@ -243,14 +386,17 @@ static void writeRestart(const std::string& filename,
     out.write(reinterpret_cast<const char*>(&time), sizeof(double));
     for (int v = 0; v < NVAR2D; ++v)
         out.write(reinterpret_cast<const char*>(U[v].data()), totalDOF * sizeof(double));
+    out.write(reinterpret_cast<const char*>(&iterCount), sizeof(int));
     out.close();
-    std::cout << "Restart written to " << filename << " (time = " << time << ")" << std::endl;
+    std::cout << "Restart written to " << filename
+              << " (time = " << time << ", iter = " << iterCount << ")" << std::endl;
 }
 
 static bool readRestart(const std::string& filename,
                         std::vector<std::vector<double>>& U,
-                        int nE, int nqVol, double& time)
+                        int nE, int nqVol, double& time, int& iterCount)
 {
+    iterCount = 0;
     int totalDOF = nE * nqVol;
     std::ifstream in(filename, std::ios::binary);
     if (!in.is_open()) {
@@ -272,8 +418,11 @@ static bool readRestart(const std::string& filename,
         U[v].resize(totalDOF);
         in.read(reinterpret_cast<char*>(U[v].data()), totalDOF * sizeof(double));
     }
+    if (in.read(reinterpret_cast<char*>(&iterCount), sizeof(int)).fail())
+        iterCount = 0;
     in.close();
-    std::cout << "Restart loaded from " << filename << " (time = " << time << ")" << std::endl;
+    std::cout << "Restart loaded from " << filename
+              << " (time = " << time << ", iter = " << iterCount << ")" << std::endl;
     return true;
 }
 
@@ -452,14 +601,16 @@ int main(int argc, char* argv[])
 
     // Load restart if specified
     double time_restart = 0.0;
+    int iter_offset = 0;
     if (!inp->restartfile.empty()) {
-        if (!readRestart(inp->restartfile, U, nE, nqVol, time_restart)) {
+        if (!readRestart(inp->restartfile, U, nE, nqVol, time_restart, iter_offset)) {
             std::cout << "Restart failed, exiting." << std::endl;
             return 1;
         }
     }
 
     writeVTK("solution2d_init.vtk", mesh, geom, U, Bmat, Bvis, Minv, wq, zVis, P, nq1d);
+    writeVTK_solpts("solution2d_init_solpts.vtk", mesh, geom, U, zq, nq1d, inp->ptype);
 
     // ========================================================================
     // Flatten data for GPU
@@ -589,6 +740,7 @@ int main(int argc, char* argv[])
     // ========================================================================
     double time = time_restart;
     bool nanFound = false;
+    int finalIterCount = iter_offset;
     auto tStart = std::chrono::high_resolution_clock::now();
 
     bool useImplicit = (inp->timescheme == "Implicit");
@@ -616,11 +768,19 @@ int main(int argc, char* argv[])
         std::cout << "  Convergence tolerance: " << implTol << std::endl;
 
         bool converged = false;
+        int lastGlobalIter = iter_offset;
 
-        std::ofstream csvFile("residual_history.csv");
-        csvFile << "iter,rho,rhou,rhov,rhoE\n";
+        std::ofstream csvFile;
+        if (iter_offset > 0) {
+            csvFile.open("residual_history.csv", std::ios::app);
+        } else {
+            csvFile.open("residual_history.csv");
+            csvFile << "iter,rho,rhou,rhov,rhoE\n";
+        }
 
         for (int iter = 0; iter < nt && !nanFound && !converged; ++iter) {
+            int globalIter = iter_offset + iter + 1;
+
             gpuSnapshotSolution(gpu);
             gpuComputeElementCFL(gpu, cfl, P);
 
@@ -629,7 +789,7 @@ int main(int argc, char* argv[])
             int gmresIter = gpuImplicitStep(gpu, imp, gmresTol, gmresMax,
                                             0.0, resNorm, perVarNorms);
 
-            csvFile << (iter + 1)
+            csvFile << globalIter
                     << "," << perVarNorms[0]
                     << "," << perVarNorms[1]
                     << "," << perVarNorms[2]
@@ -640,13 +800,15 @@ int main(int argc, char* argv[])
                 gpuRestoreSnapshot(gpu);
                 cfl /= 10.0;
                 nanFound = false;
-                std::cout << "\nNaN detected at iter " << (iter + 1)
+                std::cout << "\nNaN detected at iter " << globalIter
                           << ", rolling back. CFL -> " << cfl << std::endl;
                 continue;
             }
 
-            if ((iter + 1) % 10 == 0 || iter < 5 || resNorm < implTol) {
-                std::cout << "Implicit iter " << std::setw(6) << (iter + 1)
+            lastGlobalIter = globalIter;
+
+            if (globalIter % 10 == 0 || (iter < 5 && iter_offset == 0) || resNorm < implTol) {
+                std::cout << "Implicit iter " << std::setw(6) << globalIter
                           << "  CFL=" << std::scientific << std::setprecision(2) << cfl
                           << "  |res|=" << resNorm
                           << "  GMRES: " << gmresIter << " iters"
@@ -655,17 +817,17 @@ int main(int argc, char* argv[])
 
             if (resNorm < implTol) {
                 converged = true;
-                std::cout << "Converged at iteration " << (iter + 1) << std::endl;
+                std::cout << "Converged at iteration " << globalIter << std::endl;
             }
 
             cfl = std::min(cfl * cflGrowth, cflMax);
 
-            if (inp->checkpoint > 0 && (iter + 1) % inp->checkpoint == 0 && !nanFound) {
+            if (inp->checkpoint > 0 && globalIter % inp->checkpoint == 0 && !nanFound) {
                 gpuCopySolutionToHost(gpu, U_flat.data());
                 for (int v = 0; v < NVAR2D; ++v)
                     std::memcpy(U[v].data(), &U_flat[v * totalDOF], totalDOF * sizeof(double));
 
-                std::string chkVtk = "checkpoint_" + std::to_string(iter + 1) + ".vtk";
+                std::string chkVtk = "checkpoint_" + std::to_string(globalIter) + ".vtk";
                 std::vector<double> eps_chk, sensor_chk;
                 if (gpu.useAV) {
                     eps_chk.resize(nE); sensor_chk.resize(nE);
@@ -674,9 +836,12 @@ int main(int argc, char* argv[])
                 }
                 writeVTK(chkVtk, mesh, geom, U, Bmat, Bvis, Minv, wq, zVis, P, nq1d,
                          eps_chk, sensor_chk);
-                std::string chkBin = "restart2d_" + std::to_string(iter + 1) + ".bin";
-                writeRestart(chkBin, U, nE, nqVol, time);
-                std::cout << "\nCheckpoint at iteration " << (iter + 1) << std::endl;
+                std::string chkSolpts = "checkpoint_" + std::to_string(globalIter) + "_solpts.vtk";
+                writeVTK_solpts(chkSolpts, mesh, geom, U, zq, nq1d, inp->ptype,
+                                eps_chk, sensor_chk);
+                std::string chkBin = "restart2d_" + std::to_string(globalIter) + ".bin";
+                writeRestart(chkBin, U, nE, nqVol, time, globalIter);
+                std::cout << "\nCheckpoint at iteration " << globalIter << std::endl;
             }
 
             printProgressBar(iter + 1, nt);
@@ -684,35 +849,53 @@ int main(int argc, char* argv[])
 
         csvFile.close();
         std::cout << "Residual history written to residual_history.csv" << std::endl;
+        finalIterCount = lastGlobalIter;
 
         gpuImplicitFree(imp);
     } else {
         // ==================================================================
         // Explicit RK4 time integration
         // ==================================================================
-        std::ofstream csvFile("residual_history.csv");
-        csvFile << "step,time,rho,rhou,rhov,rhoE\n";
+        const int logInterval = 100;
+        const int timerInterval = 10000;
+        int lastGlobalStep = iter_offset;
+
+        std::ofstream csvFile;
+        if (iter_offset > 0) {
+            csvFile.open("residual_history.csv", std::ios::app);
+        } else {
+            csvFile.open("residual_history.csv");
+            csvFile << "step,time,rho,rhou,rhov,rhoE\n";
+        }
+
+        auto tBatch = std::chrono::high_resolution_clock::now();
 
         for (int t_step = 0; t_step < nt && !nanFound; ++t_step)
         {
+            int globalStep = iter_offset + t_step;
+
             gpuSnapshotSolution(gpu);
 
             if (CFL > 0.0)
                 dt = gpuComputeCFL(gpu, CFL, P);
 
-            if (t_step < 5)
-                std::cout << "Step " << t_step << ": dt = " << dt << std::endl;
+            if (t_step < 5 && iter_offset == 0)
+                std::cout << "Step " << globalStep << ": dt = " << dt << std::endl;
 
             gpuComputeDGRHS(gpu, false, time);
 
-            double perVarNorms[4];
-            gpuResidualNormPerVar(gpu, perVarNorms);
-            csvFile << t_step
-                    << "," << time
-                    << "," << perVarNorms[0]
-                    << "," << perVarNorms[1]
-                    << "," << perVarNorms[2]
-                    << "," << perVarNorms[3] << "\n";
+            bool doLog = (globalStep % logInterval == 0) && !(t_step == 0 && iter_offset > 0);
+            if (doLog) {
+                double perVarNorms[4];
+                gpuResidualNormPerVarFused(gpu, perVarNorms);
+                csvFile << globalStep
+                        << "," << time
+                        << "," << perVarNorms[0]
+                        << "," << perVarNorms[1]
+                        << "," << perVarNorms[2]
+                        << "," << perVarNorms[3] << "\n";
+            }
+
             gpuRK4Stage(gpu, dt, 1);
 
             gpuComputeDGRHS(gpu, true, time + 0.5 * dt);
@@ -725,10 +908,11 @@ int main(int argc, char* argv[])
             gpuRK4Stage(gpu, dt, 4);
 
             time += dt;
+            lastGlobalStep = globalStep + 1;
 
             nanFound = gpuCheckNaN(gpu);
             if (nanFound) {
-                std::cout << "\nNaN first detected at step " << t_step << std::endl;
+                std::cout << "\nNaN first detected at step " << globalStep << std::endl;
 
                 gpuCopyPrevSolutionToHost(gpu, U_flat.data());
                 for (int v = 0; v < NVAR2D; ++v)
@@ -746,12 +930,20 @@ int main(int argc, char* argv[])
                 std::cout << "Pre-NaN solution written to solution2d_prenan.vtk" << std::endl;
             }
 
-            if (inp->checkpoint > 0 && (t_step + 1) % inp->checkpoint == 0 && !nanFound) {
+            if ((t_step + 1) % timerInterval == 0) {
+                auto tNow = std::chrono::high_resolution_clock::now();
+                double batchMs = std::chrono::duration<double, std::milli>(tNow - tBatch).count();
+                double msPerStep = batchMs / timerInterval;
+                fprintf(stderr, " [%.3f ms/step]", msPerStep);
+                tBatch = tNow;
+            }
+
+            if (inp->checkpoint > 0 && (globalStep + 1) % inp->checkpoint == 0 && !nanFound) {
                 gpuCopySolutionToHost(gpu, U_flat.data());
                 for (int v = 0; v < NVAR2D; ++v)
                     std::memcpy(U[v].data(), &U_flat[v * totalDOF], totalDOF * sizeof(double));
 
-                std::string chkVtk = "checkpoint_" + std::to_string(t_step + 1) + ".vtk";
+                std::string chkVtk = "checkpoint_" + std::to_string(globalStep + 1) + ".vtk";
                 std::vector<double> eps_chk, sensor_chk;
                 if (gpu.useAV) {
                     eps_chk.resize(nE);
@@ -761,9 +953,12 @@ int main(int argc, char* argv[])
                 }
                 writeVTK(chkVtk, mesh, geom, U, Bmat, Bvis, Minv, wq, zVis, P, nq1d,
                          eps_chk, sensor_chk);
-                std::string chkBin = "restart2d_" + std::to_string(t_step + 1) + ".bin";
-                writeRestart(chkBin, U, nE, nqVol, time);
-                std::cout << "\nCheckpoint at step " << t_step + 1
+                std::string chkSolpts = "checkpoint_" + std::to_string(globalStep + 1) + "_solpts.vtk";
+                writeVTK_solpts(chkSolpts, mesh, geom, U, zq, nq1d, inp->ptype,
+                                eps_chk, sensor_chk);
+                std::string chkBin = "restart2d_" + std::to_string(globalStep + 1) + ".bin";
+                writeRestart(chkBin, U, nE, nqVol, time, globalStep + 1);
+                std::cout << "\nCheckpoint at step " << globalStep + 1
                           << " (time = " << time << ")" << std::endl;
             }
 
@@ -772,6 +967,7 @@ int main(int argc, char* argv[])
 
         csvFile.close();
         std::cout << "Residual history written to residual_history.csv" << std::endl;
+        finalIterCount = lastGlobalStep;
     }
 
     auto tEnd = std::chrono::high_resolution_clock::now();
@@ -844,10 +1040,13 @@ int main(int argc, char* argv[])
     }
     writeVTK("solution2d_final.vtk", mesh, geom, U, Bmat, Bvis, Minv, wq, zVis, P, nq1d,
              eps_host, sensor_host);
+    writeVTK_solpts("solution2d_final_solpts.vtk", mesh, geom, U, zq, nq1d,
+                    inp->ptype, eps_host, sensor_host);
     std::cout << "Output written to solution2d_init.vtk, solution2d_final.vtk" << std::endl;
+    std::cout << "Solution-point output written to solution2d_init_solpts.vtk, solution2d_final_solpts.vtk" << std::endl;
 
     if (!nanFound)
-        writeRestart("restart2d.bin", U, nE, nqVol, time);
+        writeRestart("restart2d.bin", U, nE, nqVol, time, finalIterCount);
 
     gpuFree(gpu);
     delete inp;

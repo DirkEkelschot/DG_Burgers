@@ -922,6 +922,55 @@ __global__ void nanCheckKernel(const double* __restrict__ data, int N,
 }
 
 // ============================================================================
+// Kernel 7: Fused per-variable residual norm (all 4 variables in one pass)
+// ============================================================================
+
+__global__ void residualNormPerVarKernel(
+    const double* __restrict__ d_R,
+    double* __restrict__ d_norms,
+    int totalDOF)
+{
+    extern __shared__ double sdata[];
+    int tid = threadIdx.x;
+    int bs  = blockDim.x;
+
+    double s0 = 0.0, s1 = 0.0, s2 = 0.0, s3 = 0.0;
+    for (int i = blockIdx.x * bs + tid; i < totalDOF; i += gridDim.x * bs) {
+        double v0 = d_R[i];
+        double v1 = d_R[totalDOF + i];
+        double v2 = d_R[2 * totalDOF + i];
+        double v3 = d_R[3 * totalDOF + i];
+        s0 += v0 * v0;
+        s1 += v1 * v1;
+        s2 += v2 * v2;
+        s3 += v3 * v3;
+    }
+
+    sdata[tid]          = s0;
+    sdata[tid + bs]     = s1;
+    sdata[tid + 2 * bs] = s2;
+    sdata[tid + 3 * bs] = s3;
+    __syncthreads();
+
+    for (int s = bs / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            sdata[tid]          += sdata[tid + s];
+            sdata[tid + bs]     += sdata[tid + s + bs];
+            sdata[tid + 2 * bs] += sdata[tid + s + 2 * bs];
+            sdata[tid + 3 * bs] += sdata[tid + s + 3 * bs];
+        }
+        __syncthreads();
+    }
+
+    if (tid == 0) {
+        atomicAdd(&d_norms[0], sdata[0]);
+        atomicAdd(&d_norms[1], sdata[bs]);
+        atomicAdd(&d_norms[2], sdata[2 * bs]);
+        atomicAdd(&d_norms[3], sdata[3 * bs]);
+    }
+}
+
+// ============================================================================
 // Host wrapper: allocate GPU memory
 // ============================================================================
 
@@ -983,6 +1032,7 @@ void gpuAllocate(GPUSolverData& gpu, int nE, int nF, int P, int nq1d)
     CUDA_CHECK(cudaMalloc(&gpu.d_dtMin,   sizeof(double)));
     CUDA_CHECK(cudaMalloc(&gpu.d_dtLocal, nE * sizeof(double)));
     CUDA_CHECK(cudaMalloc(&gpu.d_nanFlag, sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&gpu.d_normBuf, 4 * sizeof(double)));
     CUDA_CHECK(cudaMalloc(&gpu.d_epsilon, nE * sizeof(double)));
     CUDA_CHECK(cudaMemset(gpu.d_epsilon, 0, nE * sizeof(double)));
     CUDA_CHECK(cudaMalloc(&gpu.d_sensor, nE * sizeof(double)));
@@ -1013,7 +1063,7 @@ void gpuFree(GPUSolverData& gpu)
     cudaFree(gpu.d_Utmp);
     cudaFree(gpu.d_Ucoeff);  cudaFree(gpu.d_rhsCoeff);
     cudaFree(gpu.d_dtMin);   cudaFree(gpu.d_dtLocal);
-    cudaFree(gpu.d_nanFlag);
+    cudaFree(gpu.d_nanFlag); cudaFree(gpu.d_normBuf);
     cudaFree(gpu.d_epsilon); cudaFree(gpu.d_sensor);
     cudaFree(gpu.d_Uprev);   cudaFree(gpu.d_Qcoeff);
 }
@@ -1281,6 +1331,24 @@ void gpuRestoreSnapshot(GPUSolverData& gpu)
 {
     CUDA_CHECK(cudaMemcpy(gpu.d_U, gpu.d_Uprev,
                NVAR_GPU * gpu.totalDOF * sizeof(double), cudaMemcpyDeviceToDevice));
+}
+
+// ============================================================================
+// Host wrapper: fused per-variable residual norm (1 H2D + 1 kernel + 1 D2H)
+// ============================================================================
+
+void gpuResidualNormPerVarFused(GPUSolverData& gpu, double norms[4])
+{
+    CUDA_CHECK(cudaMemset(gpu.d_normBuf, 0, 4 * sizeof(double)));
+
+    int bk = 256;
+    int gd = min((gpu.totalDOF + bk - 1) / bk, 1024);
+    residualNormPerVarKernel<<<gd, bk, 4 * bk * sizeof(double)>>>(
+        gpu.d_R, gpu.d_normBuf, gpu.totalDOF);
+
+    CUDA_CHECK(cudaMemcpy(norms, gpu.d_normBuf, 4 * sizeof(double), cudaMemcpyDeviceToHost));
+    for (int v = 0; v < 4; ++v)
+        norms[v] = sqrt(norms[v]);
 }
 
 // ============================================================================
