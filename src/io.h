@@ -48,13 +48,7 @@ struct Inputs2D {
     bool   adjFDCheck       = false;
     std::string adjObjective = "Lift";
     std::string adjRestartFile;
-
-    double implicitCFLMax   = 1e6;
-    double implicitCFLGrowth= 1.5;
-    double implicitTol      = 1e-12;
-    int    gmresRestart     = 30;
-    int    gmresMaxIter     = 100;
-    double gmresTol         = 0.01;
+    bool   runAdjoint       = false;
 };
 
 void ParseEquals(const std::string &line, std::string &lhs,

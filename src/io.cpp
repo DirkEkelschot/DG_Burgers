@@ -241,13 +241,10 @@ Inputs2D* ReadXmlFile2D(const char* filename)
     }
     if (param_map.count("AdjointObjective")) inp->adjObjective = param_map["AdjointObjective"];
     if (param_map.count("AdjointRestartFile")) inp->adjRestartFile = param_map["AdjointRestartFile"];
-
-    if (param_map.count("ImplicitCFLMax"))    inp->implicitCFLMax   = std::stod(param_map["ImplicitCFLMax"]);
-    if (param_map.count("ImplicitCFLGrowth")) inp->implicitCFLGrowth= std::stod(param_map["ImplicitCFLGrowth"]);
-    if (param_map.count("ImplicitTol"))       inp->implicitTol      = std::stod(param_map["ImplicitTol"]);
-    if (param_map.count("GMRESRestart"))      inp->gmresRestart     = std::stoi(param_map["GMRESRestart"]);
-    if (param_map.count("GMRESMaxIter"))      inp->gmresMaxIter     = std::stoi(param_map["GMRESMaxIter"]);
-    if (param_map.count("GMRESTol"))          inp->gmresTol         = std::stod(param_map["GMRESTol"]);
+    if (param_map.count("RunAdjoint")) {
+        std::string val = param_map["RunAdjoint"];
+        inp->runAdjoint = (val == "1" || val == "true" || val == "True");
+    }
 
     if (inp->nquad == 0)
         inp->nquad = inp->porder + 1;
@@ -274,18 +271,11 @@ Inputs2D* ReadXmlFile2D(const char* filename)
         std::cout << "AVkappa         = " << inp->AVkappa   << std::endl;
         std::cout << "AVscale         = " << inp->AVscale   << std::endl;
     }
-    if (inp->timescheme == "Implicit") {
-        std::cout << "ImplicitCFLMax  = " << inp->implicitCFLMax  << std::endl;
-        std::cout << "ImplicitCFLGrw  = " << inp->implicitCFLGrowth << std::endl;
-        std::cout << "ImplicitTol     = " << inp->implicitTol     << std::endl;
-        std::cout << "GMRESRestart    = " << inp->gmresRestart    << std::endl;
-        std::cout << "GMRESMaxIter    = " << inp->gmresMaxIter    << std::endl;
-        std::cout << "GMRESTol        = " << inp->gmresTol        << std::endl;
-    }
     if (!inp->restartfile.empty())
         std::cout << "RestartFile     = " << inp->restartfile << std::endl;
     if (!inp->adjRestartFile.empty())
         std::cout << "AdjRestartFile  = " << inp->adjRestartFile << std::endl;
+    std::cout << "RunAdjoint      = " << (inp->runAdjoint ? "ON" : "OFF") << std::endl;
     std::cout << "AdjObjective    = " << inp->adjObjective << std::endl;
     if (inp->checkpoint > 0)
         std::cout << "Checkpoint      = every " << inp->checkpoint << " steps" << std::endl;

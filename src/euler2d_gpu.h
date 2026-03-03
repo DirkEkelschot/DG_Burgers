@@ -57,7 +57,6 @@ struct GPUSolverData {
 
     // CFL reduction scratch
     double* d_dtMin;    // [1]
-    double* d_dtLocal;  // [nE] per-element dt (used by implicit solver)
 
     // NaN flag
     int* d_nanFlag;     // [1]
@@ -82,19 +81,6 @@ struct GPUSolverData {
     double AVs0, AVkappa, AVscale;
 };
 
-struct ImplicitGPUData {
-    int N;
-    int maxKrylov;
-    double* d_R0;       // saved base residual [NVAR * totalDOF]
-    double* d_V;        // Krylov basis [(maxKrylov+1) * N]
-    double* d_w;        // preconditioner work vector [N]
-    double* d_dotBuf;   // reduction scratch [1]
-    double* d_Jac;      // block-Jacobi LU factors [nE * blockSz * blockSz]
-    int*    d_JacPiv;   // block-Jacobi pivots [nE * blockSz]
-    double Unorm;
-    int blockSz;        // NVAR * nmodes
-};
-
 void gpuAllocate(GPUSolverData& gpu, int nE, int nF, int P, int nq1d);
 void gpuFree(GPUSolverData& gpu);
 
@@ -117,7 +103,6 @@ void gpuCopySolutionToHost(GPUSolverData& gpu, double* U_flat);
 void gpuComputeDGRHS(GPUSolverData& gpu, bool useUtmp, double time);
 void gpuRK4Stage(GPUSolverData& gpu, double dt, int stage);
 double gpuComputeCFL(GPUSolverData& gpu, double CFL, int P);
-void gpuComputeElementCFL(GPUSolverData& gpu, double CFL, int P);
 bool gpuCheckNaN(GPUSolverData& gpu);
 void gpuSetNodalToModal(const double* T, int P1);
 void gpuCopyEpsilonToHost(GPUSolverData& gpu, double* eps_host);
@@ -126,15 +111,5 @@ void gpuSnapshotSolution(GPUSolverData& gpu);
 void gpuCopyPrevSolutionToHost(GPUSolverData& gpu, double* U_flat);
 void gpuRestoreSnapshot(GPUSolverData& gpu);
 void gpuResidualNormPerVarFused(GPUSolverData& gpu, double norms[4]);
-
-void gpuImplicitAllocate(ImplicitGPUData& imp, const GPUSolverData& gpu, int maxKrylov);
-void gpuImplicitFree(ImplicitGPUData& imp);
-double gpuResidualNorm(GPUSolverData& gpu, ImplicitGPUData& imp);
-void gpuResidualNormPerVar(GPUSolverData& gpu, double norms[4]);
-void gpuAssembleBlockJacobi(GPUSolverData& gpu, ImplicitGPUData& imp);
-int gpuImplicitStep(GPUSolverData& gpu, ImplicitGPUData& imp,
-                    double gmresTol, int gmresMaxIter, double time,
-                    double& residualNorm,
-                    double* perVarNorms = nullptr);
 
 #endif

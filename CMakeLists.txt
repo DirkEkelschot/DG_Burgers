@@ -40,6 +40,7 @@ add_executable(app2d
     src/geom2d.cpp
     src/euler2d.cpp
     src/euler2d_gpu.cu
+    src/adjoint2d_gpu.cu
     2D-Euler-app.cpp
 )
 if(DEFAULT_BLAS_ROOT AND EXISTS "${DEFAULT_BLAS_ROOT}/include")
