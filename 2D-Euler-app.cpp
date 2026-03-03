@@ -1133,6 +1133,7 @@ int main(int argc, char* argv[])
                     T[r * P1 + c] = aug[r * 2*P1 + P1 + c];
         }
         gpuSetNodalToModal(T.data(), P1);
+        adjointGpuSetNodalToModal(T.data(), P1);
     }
 
     std::cout << "GPU initialised: " << nE << " elements, P=" << P
