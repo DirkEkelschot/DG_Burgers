@@ -1187,7 +1187,7 @@ __global__ void adjointSensorKernel(
     else
         eps = 0.5 * epsilon0 * (1.0 + sin(M_PI * (maxSe - s0) / (2.0 * kappa)));
 
-    d_adjEpsilon[e] = fmax(eps, d_fwdEpsilon[e]);
+    d_adjEpsilon[e] = fmax(eps, fmin(d_fwdEpsilon[e], epsilon0));
     d_adjSensor[e]  = maxSe;
 }
 

@@ -591,6 +591,7 @@ int main(int argc, char* argv[])
     gpu.AVkappa  = inp->AVkappa;
     gpu.AVs0     = (inp->AVs0 != 0.0) ? inp->AVs0
                    : -(4.25 * std::log10((double)std::max(P, 1)) + 0.5);
+    gpu.AVscale  = inp->AVscale;
 
     gpuCopyStaticData(gpu,
         geom.detJ.data(), geom.dxidx.data(), geom.dxidy.data(),
