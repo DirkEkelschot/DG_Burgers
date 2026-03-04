@@ -105,6 +105,7 @@ void gpuRK4Stage(GPUSolverData& gpu, double dt, int stage);
 double gpuComputeCFL(GPUSolverData& gpu, double CFL, int P);
 bool gpuCheckNaN(GPUSolverData& gpu);
 void gpuSetNodalToModal(const double* T, int P1);
+void gpuSetFaceInterp(const double* interpL, const double* interpR, int nq1d);
 void gpuCopyEpsilonToHost(GPUSolverData& gpu, double* eps_host);
 void gpuCopySensorToHost(GPUSolverData& gpu, double* sensor_host);
 void gpuSnapshotSolution(GPUSolverData& gpu);

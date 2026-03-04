@@ -470,11 +470,18 @@ int main(int argc, char* argv[])
     GeomData2D geom = computeGeometry(mesh, xiVol, etaVol, nqVol, zq, nq1d);
 
     // ========================================================================
-    // Mass matrices
+    // Mass matrices (Lagrange basis for GPU; see 2D-Euler-app.cpp comment)
     // ========================================================================
-    std::vector<std::vector<double>> Bmat = basis1D->GetB();
-    std::vector<std::vector<double>> Dmat = basis1D->GetD();
-    std::vector<std::vector<double>> blr  = basis1D->GetLeftRightBasisValues();
+    std::unique_ptr<BasisPoly> gpuBasis1D;
+    if (inp->btype == "Modal") {
+        gpuBasis1D = BasisPoly::Create("Nodal", P, inp->ptype, zq, wq);
+        gpuBasis1D->ConstructBasis();
+    }
+    BasisPoly* gpuBasis = (inp->btype == "Modal") ? gpuBasis1D.get() : basis1D.get();
+
+    std::vector<std::vector<double>> Bmat = gpuBasis->GetB();
+    std::vector<std::vector<double>> Dmat = gpuBasis->GetD();
+    std::vector<std::vector<double>> blr  = gpuBasis->GetLeftRightBasisValues();
 
     std::vector<double> massLU;
     std::vector<int>    massPiv;
@@ -493,10 +500,8 @@ int main(int argc, char* argv[])
         zVis[i] = -1.0 + 2.0 * i / (nVis - 1);
 
     std::vector<std::vector<double>> Bvis;
-    if (inp->btype == "Modal")
-        evalModalBasis1D(P, zVis, Bvis);
-    else {
-        std::vector<double> zn = basis1D->GetZn();
+    {
+        std::vector<double> zn = gpuBasis->GetZn();
         evalNodalBasis1D(P, inp->ptype, zn, zVis, Bvis);
     }
 
@@ -608,12 +613,20 @@ int main(int argc, char* argv[])
     gpuCopySolutionToDevice(gpu, U_flat.data());
 
     {
+        std::vector<double> interpL(nq1d), interpR(nq1d);
+        std::vector<double> zq_mut(zq);
+        for (int k = 0; k < nq1d; ++k) {
+            interpL[k] = polylib::hgj(k, -1.0, zq_mut.data(), nq1d, 0.0, 0.0);
+            interpR[k] = polylib::hgj(k,  1.0, zq_mut.data(), nq1d, 0.0, 0.0);
+        }
+        gpuSetFaceInterp(interpL.data(), interpR.data(), nq1d);
+    }
+
+    {
         int P1 = P + 1;
         std::vector<double> T(P1 * P1, 0.0);
-        if (inp->btype == "Modal") {
-            for (int i = 0; i < P1; ++i) T[i * P1 + i] = 1.0;
-        } else {
-            std::vector<double> zn = basis1D->GetZn();
+        {
+            std::vector<double> zn = gpuBasis->GetZn();
             std::vector<double> V(P1 * P1);
             for (int n = 0; n < P1; ++n)
                 for (int p = 0; p < P1; ++p) {

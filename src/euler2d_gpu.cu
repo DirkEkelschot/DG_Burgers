@@ -23,6 +23,7 @@ __constant__ double c_Dmat[MAX_P1 * MAX_NQ1D];
 __constant__ double c_blr[MAX_P1 * 2];
 __constant__ double c_wq[MAX_NQ1D];
 __constant__ double c_NodalToModal[MAX_P1 * MAX_P1];
+__constant__ double c_faceInterp[2 * MAX_NQ1D];
 
 // ============================================================================
 // Device helper functions
@@ -251,6 +252,95 @@ __device__ inline double evalPhiFace(int lf, int i, int j, int q,
         default: phiXi = 0; phiEta = 0;
     }
     return phiXi * phiEta;
+}
+
+// Evaluate face state by Lagrange extrapolation from volume quadrature points.
+// c_faceInterp[0..nq1d-1]       = L_j(-1)  (weights at z=-1)
+// c_faceInterp[nq1d..2*nq1d-1]  = L_j(+1)  (weights at z=+1)
+__device__ inline void evalFaceStateFromU(
+    const double* U, int nqVol, int nq1d,
+    int lf, int q, double result[4])
+{
+    for (int vv = 0; vv < 4; ++vv) result[vv] = 0.0;
+
+    switch (lf) {
+        case 0: // eta = -1, xi = zq[q]
+            for (int j = 0; j < nq1d; ++j) {
+                double w = c_faceInterp[j];
+                int idx = q * nq1d + j;
+                for (int vv = 0; vv < 4; ++vv)
+                    result[vv] += w * U[vv * nqVol + idx];
+            }
+            break;
+        case 1: // xi = +1, eta = zq[q]
+            for (int i = 0; i < nq1d; ++i) {
+                double w = c_faceInterp[nq1d + i];
+                int idx = i * nq1d + q;
+                for (int vv = 0; vv < 4; ++vv)
+                    result[vv] += w * U[vv * nqVol + idx];
+            }
+            break;
+        case 2: // eta = +1, xi = zq[nq1d-1-q] (reversed)
+            for (int j = 0; j < nq1d; ++j) {
+                double w = c_faceInterp[nq1d + j];
+                int idx = (nq1d - 1 - q) * nq1d + j;
+                for (int vv = 0; vv < 4; ++vv)
+                    result[vv] += w * U[vv * nqVol + idx];
+            }
+            break;
+        case 3: // xi = -1, eta = zq[nq1d-1-q] (reversed)
+            for (int i = 0; i < nq1d; ++i) {
+                double w = c_faceInterp[i];
+                int idx = i * nq1d + (nq1d - 1 - q);
+                for (int vv = 0; vv < 4; ++vv)
+                    result[vv] += w * U[vv * nqVol + idx];
+            }
+            break;
+    }
+}
+
+// Same as above but reading from a global array at a specific element offset.
+__device__ inline void evalFaceStateFromUGlobal(
+    const double* d_U, int totalDOF, int nqVol, int nq1d,
+    int elem, int lf, int q, double result[4])
+{
+    for (int vv = 0; vv < 4; ++vv) result[vv] = 0.0;
+    int base = elem * nqVol;
+
+    switch (lf) {
+        case 0:
+            for (int j = 0; j < nq1d; ++j) {
+                double w = c_faceInterp[j];
+                int idx = base + q * nq1d + j;
+                for (int vv = 0; vv < 4; ++vv)
+                    result[vv] += w * d_U[vv * totalDOF + idx];
+            }
+            break;
+        case 1:
+            for (int i = 0; i < nq1d; ++i) {
+                double w = c_faceInterp[nq1d + i];
+                int idx = base + i * nq1d + q;
+                for (int vv = 0; vv < 4; ++vv)
+                    result[vv] += w * d_U[vv * totalDOF + idx];
+            }
+            break;
+        case 2:
+            for (int j = 0; j < nq1d; ++j) {
+                double w = c_faceInterp[nq1d + j];
+                int idx = base + (nq1d - 1 - q) * nq1d + j;
+                for (int vv = 0; vv < 4; ++vv)
+                    result[vv] += w * d_U[vv * totalDOF + idx];
+            }
+            break;
+        case 3:
+            for (int i = 0; i < nq1d; ++i) {
+                double w = c_faceInterp[i];
+                int idx = base + i * nq1d + (nq1d - 1 - q);
+                for (int vv = 0; vv < 4; ++vv)
+                    result[vv] += w * d_U[vv * totalDOF + idx];
+            }
+            break;
+    }
 }
 
 // ============================================================================
@@ -524,8 +614,7 @@ __global__ void volumeSurfaceKernel(
     double* sDxidy  = sDxidx  + nqVol;                  // [nqVol]
     double* sDetadx = sDxidy  + nqVol;                  // [nqVol]
     double* sDetady = sDetadx + nqVol;                  // [nqVol]
-    double* sUcoeff = sDetady + nqVol;                  // [4 * nmodes]
-    double* sFnumW  = sUcoeff + 4 * nmodes;             // [nFaceQP * 4]
+    double* sFnumW  = sDetady + nqVol;                  // [nFaceQP * 4]
 
     // ===== Phase 1: Cooperatively load element data =====
     int baseQ = e * nqVol;
@@ -540,11 +629,6 @@ __global__ void volumeSurfaceKernel(
         sDxidy[i]  = d_dxidy[gIdx];
         sDetadx[i] = d_detadx[gIdx];
         sDetady[i] = d_detady[gIdx];
-    }
-    for (int i = tid; i < 4 * nmodes; i += blockDim.x) {
-        int vv = i / nmodes;
-        int mm = i % nmodes;
-        sUcoeff[i] = d_Ucoeff[vv * nE * nmodes + e * nmodes + mm];
     }
     __syncthreads();
 
@@ -595,8 +679,8 @@ __global__ void volumeSurfaceKernel(
     }
 
     // ===== Phase 3: Precompute surface numerical fluxes =====
-    // Threads [nwork .. nwork+nFaceQP) each handle one (face, quad_point).
-    // Runs concurrently with Phase 2 on separate warps.
+    // Face states are evaluated by Lagrange extrapolation from volume
+    // quadrature points, bypassing the forward-transform coefficients.
     else if (tid < nwork + nFaceQP) {
         int fq_id = tid - nwork;
         int lf = fq_id / nqFace;
@@ -616,23 +700,13 @@ __global__ void volumeSurfaceKernel(
         double ny = d_faceNy[fIdx];
         double wf = c_wq[q] * d_faceJac[fIdx];
 
-        double UMe[4] = {0, 0, 0, 0};
-        for (int vv = 0; vv < 4; ++vv)
-            for (int ii = 0; ii < P1; ++ii)
-                for (int jj = 0; jj < P1; ++jj)
-                    UMe[vv] += sUcoeff[vv * nmodes + ii * P1 + jj]
-                             * evalPhiFace(lf, ii, jj, q, P1, nq1d);
+        double UMe[4];
+        evalFaceStateFromU(sU, nqVol, nq1d, lf, q, UMe);
 
         double UNbr[4];
         if (!is_boundary) {
             int qN = nqFace - 1 - q;
-            for (int vv = 0; vv < 4; ++vv) {
-                UNbr[vv] = 0.0;
-                for (int ii = 0; ii < P1; ++ii)
-                    for (int jj = 0; jj < P1; ++jj)
-                        UNbr[vv] += d_Ucoeff[vv * nE * nmodes + eN * nmodes + ii*P1+jj]
-                                  * evalPhiFace(lfN, ii, jj, qN, P1, nq1d);
-            }
+            evalFaceStateFromUGlobal(d_U, totalDOF, nqVol, nq1d, eN, lfN, qN, UNbr);
         } else {
             int bcType = d_face_bcType[f];
             if (bcType == 1)
@@ -1081,6 +1155,20 @@ void gpuCopyStaticData(
 }
 
 // ============================================================================
+// Host wrapper: upload face interpolation weights for Lagrange extrapolation
+// ============================================================================
+
+void gpuSetFaceInterp(const double* interpL, const double* interpR, int nq1d)
+{
+    double buf[2 * MAX_NQ1D];
+    for (int i = 0; i < nq1d; ++i) {
+        buf[i]        = interpL[i];
+        buf[nq1d + i] = interpR[i];
+    }
+    CUDA_CHECK(cudaMemcpyToSymbol(c_faceInterp, buf, 2 * nq1d * sizeof(double)));
+}
+
+// ============================================================================
 // Host wrapper: upload nodal-to-modal transform
 // ============================================================================
 
@@ -1143,7 +1231,7 @@ void gpuComputeDGRHS(GPUSolverData& gpu, bool useUtmp, double time)
     int nwork    = NVAR_GPU * nmodes;
     int nFaceQP  = 4 * nqFace;
     int blockDim2 = ((nwork + nFaceQP + 31) / 32) * 32;
-    int smem2 = (9 * nqVol + 4 * nmodes + nFaceQP * 4) * sizeof(double);
+    int smem2 = (9 * nqVol + nFaceQP * 4) * sizeof(double);
     const double* d_eps_ptr = gpu.useAV ? gpu.d_epsilon : nullptr;
     volumeSurfaceKernel<<<nE, blockDim2, smem2>>>(
         d_Uin, gpu.d_Ucoeff, gpu.d_rhsCoeff,

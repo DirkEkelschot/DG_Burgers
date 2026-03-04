@@ -908,9 +908,25 @@ int main(int argc, char* argv[])
     // ========================================================================
     // Assemble and factor mass matrices
     // ========================================================================
-    std::vector<std::vector<double>> Bmat = basis1D->GetB();
-    std::vector<std::vector<double>> Dmat = basis1D->GetD();
-    std::vector<std::vector<double>> blr  = basis1D->GetLeftRightBasisValues();
+    // GPU DG operations always use the Lagrange (Nodal) basis at the
+    // quadrature points.  The DG weak form is basis-independent: any
+    // choice of test/trial functions spanning the same polynomial space
+    // yields the same dU/dt at quadrature points (in exact arithmetic).
+    // The hierarchical Modal mass matrix is catastrophically ill-conditioned
+    // on curved Q2 elements (condition numbers > 10^10), so Lagrange is
+    // used for numerical stability.  The user's BasisType choice still
+    // controls the shock-sensor NodalToModal transform and VTK output.
+    // ========================================================================
+    std::unique_ptr<BasisPoly> gpuBasis1D;
+    if (inp->btype == "Modal") {
+        gpuBasis1D = BasisPoly::Create("Nodal", P, inp->ptype, zq, wq);
+        gpuBasis1D->ConstructBasis();
+    }
+    BasisPoly* gpuBasis = (inp->btype == "Modal") ? gpuBasis1D.get() : basis1D.get();
+
+    std::vector<std::vector<double>> Bmat = gpuBasis->GetB();
+    std::vector<std::vector<double>> Dmat = gpuBasis->GetD();
+    std::vector<std::vector<double>> blr  = gpuBasis->GetLeftRightBasisValues();
 
     std::vector<double> massLU;
     std::vector<int>    massPiv;
@@ -932,10 +948,8 @@ int main(int argc, char* argv[])
         zVis[i] = -1.0 + 2.0 * i / (nVis - 1);
 
     std::vector<std::vector<double>> Bvis;
-    if (inp->btype == "Modal")
-        evalModalBasis1D(P, zVis, Bvis);
-    else {
-        std::vector<double> zn = basis1D->GetZn();
+    {
+        std::vector<double> zn = gpuBasis->GetZn();
         evalNodalBasis1D(P, inp->ptype, zn, zVis, Bvis);
     }
 
@@ -1089,75 +1103,25 @@ int main(int argc, char* argv[])
 
     gpuCopySolutionToDevice(gpu, U_flat.data());
 
-    // Nodal-to-modal transform for shock sensor
+    // Face interpolation weights: Lagrange polynomials at GL points evaluated at z=±1
+    {
+        std::vector<double> interpL(nq1d), interpR(nq1d);
+        std::vector<double> zq_mut(zq);
+        for (int k = 0; k < nq1d; ++k) {
+            interpL[k] = polylib::hgj(k, -1.0, zq_mut.data(), nq1d, 0.0, 0.0);
+            interpR[k] = polylib::hgj(k,  1.0, zq_mut.data(), nq1d, 0.0, 0.0);
+        }
+        gpuSetFaceInterp(interpL.data(), interpR.data(), nq1d);
+    }
+
+    // Nodal-to-modal transform for shock sensor.
+    // The GPU Ucoeff are always in the gpuBasis (Lagrange) coordinate system,
+    // so the transform must convert from Lagrange coefficients to Legendre.
     {
         int P1 = P + 1;
         std::vector<double> T(P1 * P1, 0.0);
-        if (inp->btype == "Modal") {
-            // Change-of-basis from hierarchical modal to Legendre via T = V^{-1} * R
-            // R[k,i] = modal basis function i at evaluation point z_k
-            // V[k,p] = Legendre polynomial p at evaluation point z_k
-            std::vector<double> zeval(P1), weval(P1);
-            polylib::zwgl(zeval.data(), weval.data(), P1);
-
-            std::vector<double> Rmat(P1 * P1, 0.0);
-            for (int k = 0; k < P1; ++k) {
-                double z = zeval[k];
-                for (int ii = 0; ii < P1; ++ii) {
-                    if (ii == 0)
-                        Rmat[k * P1 + ii] = (1.0 - z) / 2.0;
-                    else if (ii == P)
-                        Rmat[k * P1 + ii] = (1.0 + z) / 2.0;
-                    else {
-                        double val;
-                        polylib::jacobfd(1, &z, &val, NULL, ii - 1, 1.0, 1.0);
-                        Rmat[k * P1 + ii] = (1.0 - z) / 2.0 * (1.0 + z) / 2.0 * val;
-                    }
-                }
-            }
-
-            std::vector<double> V(P1 * P1);
-            for (int k = 0; k < P1; ++k)
-                for (int pp = 0; pp < P1; ++pp) {
-                    double val;
-                    polylib::jacobfd(1, &zeval[k], &val, NULL, pp, 0.0, 0.0);
-                    V[k * P1 + pp] = val;
-                }
-
-            std::vector<double> aug(P1 * 2 * P1);
-            for (int r = 0; r < P1; ++r)
-                for (int c = 0; c < P1; ++c) {
-                    aug[r * 2 * P1 + c] = V[r * P1 + c];
-                    aug[r * 2 * P1 + P1 + c] = (r == c) ? 1.0 : 0.0;
-                }
-            for (int col = 0; col < P1; ++col) {
-                int pivot = col;
-                for (int r = col + 1; r < P1; ++r)
-                    if (std::fabs(aug[r * 2*P1 + col]) > std::fabs(aug[pivot * 2*P1 + col]))
-                        pivot = r;
-                if (pivot != col)
-                    for (int c = 0; c < 2 * P1; ++c)
-                        std::swap(aug[col * 2*P1 + c], aug[pivot * 2*P1 + c]);
-                double diagInv = 1.0 / aug[col * 2*P1 + col];
-                for (int c = 0; c < 2 * P1; ++c)
-                    aug[col * 2*P1 + c] *= diagInv;
-                for (int r = 0; r < P1; ++r) {
-                    if (r == col) continue;
-                    double fv = aug[r * 2*P1 + col];
-                    for (int c = 0; c < 2 * P1; ++c)
-                        aug[r * 2*P1 + c] -= fv * aug[col * 2*P1 + c];
-                }
-            }
-
-            for (int r = 0; r < P1; ++r)
-                for (int c = 0; c < P1; ++c) {
-                    double val = 0.0;
-                    for (int k = 0; k < P1; ++k)
-                        val += aug[r * 2*P1 + P1 + k] * Rmat[k * P1 + c];
-                    T[r * P1 + c] = val;
-                }
-        } else {
-            std::vector<double> zn = basis1D->GetZn();
+        {
+            std::vector<double> zn = gpuBasis->GetZn();
             std::vector<double> V(P1 * P1);
             for (int n = 0; n < P1; ++n)
                 for (int p = 0; p < P1; ++p) {
