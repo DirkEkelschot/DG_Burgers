@@ -18,8 +18,14 @@
 #include "src/euler2d.h"
 #include "src/euler2d_gpu.h"
 #include "src/adjoint2d_gpu.h"
+#include "src/p_adapt.h"
 
 using namespace polylib;
+
+extern "C" {
+    extern void dgetrf_(int*, int*, double*, int*, int[], int*);
+    extern void dgetrs_(unsigned char*, int*, int*, double*, int*, int[], double[], int*, int*);
+}
 
 // ============================================================================
 // Freestream state (globals set from input file before the time loop)
@@ -36,20 +42,13 @@ static void evalModalBasis1D(int P, const std::vector<double>& zpts,
 {
     int npts = (int)zpts.size();
     Bvis.resize(P + 1, std::vector<double>(npts));
-    for (int p = 0; p <= P; ++p) {
+    for (int p = 0; p <= P; ++p)
         for (int i = 0; i < npts; ++i) {
             double z = zpts[i];
-            if (p == 0)
-                Bvis[p][i] = (1.0 - z) / 2.0;
-            else if (p == P)
-                Bvis[p][i] = (1.0 + z) / 2.0;
-            else {
-                double val;
-                polylib::jacobfd(1, &z, &val, NULL, p - 1, 1.0, 1.0);
-                Bvis[p][i] = (1.0 - z) / 2.0 * (1.0 + z) / 2.0 * val;
-            }
+            double val;
+            polylib::jacobfd(1, &z, &val, NULL, p, 0.0, 0.0);
+            Bvis[p][i] = val;
         }
-    }
 }
 
 // ============================================================================
@@ -846,6 +845,285 @@ static void writeAdjointRestart(const std::string& filename,
 }
 
 // ============================================================================
+// Variable-P forward solver
+// ============================================================================
+
+static int runVariableP(Inputs2D* inp, Mesh2D& mesh)
+{
+    int nE = mesh.nElements;
+    int nF = mesh.nFaces;
+    int pMin = inp->pMin, pMax = inp->pMax;
+    int nq1d = pMax + 2;
+    int nqVol = nq1d * nq1d;
+    int totalDOF = nE * nqVol;
+
+    std::vector<int> elemP;
+    if (!inp->errorIndicatorFile.empty()) {
+        std::vector<double> eta = readErrorIndicator(inp->errorIndicatorFile, nE);
+        elemP = assignElementP(eta, pMin, pMax);
+    } else {
+        elemP.assign(nE, pMax);
+        std::cout << "No error indicator file; using P=" << pMax << " everywhere" << std::endl;
+    }
+    auto groups = buildPGroups(elemP, pMin, pMax);
+
+    std::vector<double> zq(nq1d, 0.0), wq(nq1d, 0.0);
+    polylib::zwgl(zq.data(), wq.data(), nq1d);
+
+    std::vector<double> xiVol(nqVol), etaVol(nqVol);
+    for (int i = 0; i < nq1d; ++i)
+        for (int j = 0; j < nq1d; ++j) {
+            xiVol[i * nq1d + j]  = zq[i];
+            etaVol[i * nq1d + j] = zq[j];
+        }
+    GeomData2D geom = computeGeometry(mesh, xiVol, etaVol, nqVol, zq, nq1d);
+
+    double AoA_rad = inp->AoA * M_PI / 180.0;
+    g_rhoInf = 1.0;
+    g_pInf   = 1.0 / (GAMMA * inp->Mach * inp->Mach);
+    double cInfVal = std::sqrt(GAMMA * g_pInf / g_rhoInf);
+    g_uInf = inp->Mach * cInfVal * std::cos(AoA_rad);
+    g_vInf = inp->Mach * cInfVal * std::sin(AoA_rad);
+
+    std::vector<std::vector<double>> U(NVAR2D);
+    for (int v = 0; v < NVAR2D; ++v) U[v].resize(totalDOF, 0.0);
+    double rhoE_inf = g_pInf / (GAMMA - 1.0)
+                    + 0.5 * g_rhoInf * (g_uInf * g_uInf + g_vInf * g_vInf);
+    for (int i = 0; i < totalDOF; ++i) {
+        U[0][i] = g_rhoInf; U[1][i] = g_rhoInf * g_uInf;
+        U[2][i] = g_rhoInf * g_vInf; U[3][i] = rhoE_inf;
+    }
+
+    double time_restart = 0.0;
+    int iter_offset = 0;
+    if (!inp->restartfile.empty()) {
+        if (!readRestart(inp->restartfile, U, nE, nqVol, time_restart, iter_offset)) {
+            std::cout << "Restart failed, exiting." << std::endl;
+            return 1;
+        }
+    }
+
+    GPUSolverData gpu;
+    gpuAllocate(gpu, nE, nF, pMax, nq1d);
+    gpu.rhoInf = g_rhoInf; gpu.uInf = g_uInf;
+    gpu.vInf   = g_vInf;   gpu.pInf = g_pInf;
+    gpu.fluxType = (inp->fluxtype == "HLLC") ? 1 : 0;
+    gpu.useAV    = inp->useAV;
+    gpu.AVkappa  = inp->AVkappa;
+    gpu.AVs0     = (inp->AVs0 != 0.0) ? inp->AVs0
+                   : -(4.25 * std::log10((double)std::max(pMax, 1)) + 0.5);
+    gpu.AVscale  = inp->AVscale;
+
+    std::map<int, PGroupGPU> gpuGroups;
+    for (auto& [p, ginfo] : groups) {
+        int nEG = (int)ginfo.globalElemIdx.size();
+        PGroupGPU& grp = gpuGroups[p];
+        gpuAllocateGroup(grp, p, nEG);
+        gpuUploadGroupElemIdx(grp, ginfo.globalElemIdx.data());
+
+        std::vector<double> zq_c(zq), wq_c(wq);
+        auto basis = BasisPoly::Create("Nodal", p, inp->ptype, zq_c, wq_c);
+        basis->ConstructBasis();
+        auto Bg = basis->GetB();
+        auto Dg = basis->GetD();
+        auto blrg = basis->GetLeftRightBasisValues();
+        int P1 = p + 1, nmg = P1 * P1;
+
+        grp.h_Bmat.resize(P1 * nq1d);
+        grp.h_Dmat.resize(P1 * nq1d);
+        grp.h_blr.resize(P1 * 2);
+        for (int i = 0; i < P1; ++i) {
+            for (int q = 0; q < nq1d; ++q) {
+                grp.h_Bmat[i * nq1d + q] = Bg[i][q];
+                grp.h_Dmat[i * nq1d + q] = Dg[i][q];
+            }
+            grp.h_blr[i * 2] = blrg[i][0];
+            grp.h_blr[i * 2 + 1] = blrg[i][1];
+        }
+        grp.h_wq.assign(wq.begin(), wq.end());
+        grp.h_faceInterp.resize(2 * nq1d);
+        std::vector<double> zq_m(zq);
+        for (int k = 0; k < nq1d; ++k) {
+            grp.h_faceInterp[k]        = polylib::hgj(k, -1.0, zq_m.data(), nq1d, 0.0, 0.0);
+            grp.h_faceInterp[nq1d + k] = polylib::hgj(k,  1.0, zq_m.data(), nq1d, 0.0, 0.0);
+        }
+
+        // NodalToModal for shock sensor
+        {
+            std::vector<double> zn = basis->GetZn();
+            grp.h_NodalToModal.resize(P1 * P1);
+            std::vector<double> V(P1 * P1);
+            for (int n = 0; n < P1; ++n)
+                for (int pp = 0; pp < P1; ++pp) {
+                    double val;
+                    polylib::jacobfd(1, &zn[n], &val, NULL, pp, 0.0, 0.0);
+                    V[n * P1 + pp] = val;
+                }
+            std::vector<double> aug(P1 * 2 * P1);
+            for (int r = 0; r < P1; ++r)
+                for (int c = 0; c < P1; ++c) {
+                    aug[r * 2 * P1 + c] = V[r * P1 + c];
+                    aug[r * 2 * P1 + P1 + c] = (r == c) ? 1.0 : 0.0;
+                }
+            for (int col = 0; col < P1; ++col) {
+                int pivot = col;
+                for (int r = col + 1; r < P1; ++r)
+                    if (std::fabs(aug[r * 2*P1 + col]) > std::fabs(aug[pivot * 2*P1 + col]))
+                        pivot = r;
+                if (pivot != col)
+                    for (int c = 0; c < 2 * P1; ++c)
+                        std::swap(aug[col * 2*P1 + c], aug[pivot * 2*P1 + c]);
+                double di = 1.0 / aug[col * 2*P1 + col];
+                for (int c = 0; c < 2 * P1; ++c) aug[col * 2*P1 + c] *= di;
+                for (int r = 0; r < P1; ++r) {
+                    if (r == col) continue;
+                    double f = aug[r * 2*P1 + col];
+                    for (int c = 0; c < 2 * P1; ++c) aug[r * 2*P1 + c] -= f * aug[col * 2*P1 + c];
+                }
+            }
+            for (int r = 0; r < P1; ++r)
+                for (int c = 0; c < P1; ++c)
+                    grp.h_NodalToModal[r * P1 + c] = aug[r * 2*P1 + P1 + c];
+        }
+
+        // Mass matrices
+        int blockSz = nmg * nmg;
+        std::vector<double> massLU_g(nEG * blockSz, 0.0);
+        std::vector<int> massPiv_g(nEG * nmg, 0);
+        for (int eL = 0; eL < nEG; ++eL) {
+            int eG = ginfo.globalElemIdx[eL];
+            double* M = &massLU_g[eL * blockSz];
+            for (int qx = 0; qx < nq1d; ++qx)
+                for (int qe = 0; qe < nq1d; ++qe) {
+                    int qIdx = eG * nqVol + qx * nq1d + qe;
+                    double w = wq[qx] * wq[qe] * geom.detJ[qIdx];
+                    for (int i1 = 0; i1 < P1; ++i1)
+                        for (int j1 = 0; j1 < P1; ++j1) {
+                            int row = i1 * P1 + j1;
+                            double phiR = Bg[i1][qx] * Bg[j1][qe];
+                            for (int i2 = 0; i2 < P1; ++i2)
+                                for (int j2 = 0; j2 < P1; ++j2) {
+                                    int col = i2 * P1 + j2;
+                                    M[row * nmg + col] += w * phiR * Bg[i2][qx] * Bg[j2][qe];
+                                }
+                        }
+                }
+            int INFO;
+            dgetrf_(&nmg, &nmg, M, &nmg, &massPiv_g[eL * nmg], &INFO);
+        }
+        std::vector<double> Minv_g(nEG * blockSz, 0.0);
+        for (int eL = 0; eL < nEG; ++eL) {
+            double* Mb = &Minv_g[eL * blockSz];
+            for (int i = 0; i < nmg; ++i) Mb[i * nmg + i] = 1.0;
+            std::vector<double> LUc(&massLU_g[eL * blockSz], &massLU_g[(eL+1) * blockSz]);
+            std::vector<int> pc(&massPiv_g[eL * nmg], &massPiv_g[(eL+1) * nmg]);
+            unsigned char TR = 'N'; int N = nmg, NR = nmg, LA = nmg, LB = nmg, INFO;
+            dgetrs_(&TR, &N, &NR, LUc.data(), &LA, pc.data(), Mb, &LB, &INFO);
+        }
+        gpuUploadGroupMinv(grp, Minv_g.data());
+        std::cout << "  P-group P=" << p << ": " << nEG << " elements, nmodes=" << nmg << std::endl;
+    }
+
+    // Upload global static data
+    {
+        auto& grpMax = gpuGroups.rbegin()->second;
+        int P1 = pMax + 1, nm = P1 * P1;
+        std::vector<double> Minv_dummy(nE * nm * nm, 0.0);
+        std::vector<int> e2f(nE * 4), feL(nF), feR(nF), ffL(nF), ffR(nF), fbc(nF, 0);
+        for (int e = 0; e < nE; ++e)
+            for (int lf = 0; lf < 4; ++lf) e2f[e * 4 + lf] = mesh.elem2face[e][lf];
+        for (int f = 0; f < nF; ++f) {
+            feL[f] = mesh.faces[f].elemL; feR[f] = mesh.faces[f].elemR;
+            ffL[f] = mesh.faces[f].faceL; ffR[f] = mesh.faces[f].faceR;
+            if (mesh.faces[f].elemR < 0) {
+                int tag = mesh.faces[f].bcTag;
+                if (inp->testcase == "NACA0012") {
+                    if (tag == 1) fbc[f] = 1; else fbc[f] = 2;
+                }
+            }
+        }
+        gpuCopyStaticData(gpu,
+            geom.detJ.data(), geom.dxidx.data(), geom.dxidy.data(),
+            geom.detadx.data(), geom.detady.data(),
+            geom.faceNx.data(), geom.faceNy.data(), geom.faceJac.data(),
+            geom.faceXPhys.data(), geom.faceYPhys.data(),
+            grpMax.h_Bmat.data(), grpMax.h_Dmat.data(), grpMax.h_blr.data(),
+            Minv_dummy.data(), wq.data(),
+            e2f.data(), feL.data(), feR.data(), ffL.data(), ffR.data(), fbc.data());
+    }
+
+    std::vector<double> U_flat(NVAR2D * totalDOF);
+    for (int v = 0; v < NVAR2D; ++v)
+        std::memcpy(&U_flat[v * totalDOF], U[v].data(), totalDOF * sizeof(double));
+    gpuCopySolutionToDevice(gpu, U_flat.data());
+
+    std::cout << "Variable-P GPU initialised: " << nE << " elements, PMin=" << pMin
+              << ", PMax=" << pMax << ", nq1d=" << nq1d
+              << ", totalDOF=" << totalDOF << std::endl;
+
+    auto computeRHS = [&](bool useUtmp, double t) {
+        for (auto& [p, grp] : gpuGroups)
+            gpuComputeDGRHS_group(gpu, grp, useUtmp, t);
+    };
+
+    double time = time_restart, dt = inp->dt, CFL = inp->CFL;
+    int nt = inp->nt;
+    bool nanFound = false;
+    auto tStart = std::chrono::high_resolution_clock::now();
+    std::ofstream csvFile("residual_history.csv");
+    csvFile << "iter,rho,rhou,rhov,rhoE\n";
+
+    for (int t_step = 0; t_step < nt && !nanFound; ++t_step) {
+        int gs = iter_offset + t_step;
+        gpuSnapshotSolution(gpu);
+        if (CFL > 0.0) dt = gpuComputeCFL(gpu, CFL, pMax);
+        if (t_step < 5) std::cout << "Step " << gs << ": dt = " << dt << std::endl;
+
+        computeRHS(false, time);
+        if (gs % 100 == 0) {
+            double n4[4]; gpuResidualNormPerVarFused(gpu, n4);
+            csvFile << gs << "," << n4[0] << "," << n4[1] << "," << n4[2] << "," << n4[3] << "\n";
+        }
+        gpuRK4Stage(gpu, dt, 1);
+        computeRHS(true, time + 0.5 * dt); gpuRK4Stage(gpu, dt, 2);
+        computeRHS(true, time + 0.5 * dt); gpuRK4Stage(gpu, dt, 3);
+        computeRHS(true, time + dt);       gpuRK4Stage(gpu, dt, 4);
+        time += dt;
+
+        nanFound = gpuCheckNaN(gpu);
+        if (nanFound) std::cout << "\nNaN first detected at step " << gs << std::endl;
+        printProgressBar(t_step + 1, nt);
+    }
+    csvFile.close();
+    std::cout << "\nResidual history written to residual_history.csv" << std::endl;
+
+    auto tEnd = std::chrono::high_resolution_clock::now();
+    std::cout << "Wall-clock time: "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(tEnd - tStart).count()
+              << " ms\nFinal time = " << time << std::endl;
+    if (nanFound) std::cout << "NaN detected -- simulation terminated early." << std::endl;
+
+    gpuCopySolutionToHost(gpu, U_flat.data());
+    for (int v = 0; v < NVAR2D; ++v)
+        std::memcpy(U[v].data(), &U_flat[v * totalDOF], totalDOF * sizeof(double));
+    writeVTK_solpts("solution2d_final_solpts.vtk", mesh, geom, U, zq, nq1d, inp->ptype);
+    std::cout << "Output written to solution2d_final_solpts.vtk" << std::endl;
+
+    if (!nanFound) {
+        writeRestart("restart2d.bin", U, nE, nqVol, time, iter_offset + nt);
+        std::ofstream pf("elem_p_distribution.dat");
+        pf << "# element P\n";
+        for (int e = 0; e < nE; ++e) pf << e << " " << elemP[e] << "\n";
+        pf.close();
+        std::cout << "Element P distribution written to elem_p_distribution.dat" << std::endl;
+    }
+
+    for (auto& [p, grp] : gpuGroups) gpuFreeGroup(grp);
+    gpuFree(gpu);
+    return 0;
+}
+
+// ============================================================================
 // main
 // ============================================================================
 
@@ -875,6 +1153,13 @@ int main(int argc, char* argv[])
     std::cout << "Mesh: " << mesh.nElements << " elements, "
               << mesh.nFaces << " faces, "
               << mesh.nNodes << " nodes" << std::endl;
+
+    // Variable-P mode
+    if (inp->pMin > 0 && inp->pMax > 0) {
+        int ret = runVariableP(inp, mesh);
+        delete inp;
+        return ret;
+    }
 
     // ========================================================================
     // Set up 1D quadrature and basis
@@ -908,25 +1193,11 @@ int main(int argc, char* argv[])
     // ========================================================================
     // Assemble and factor mass matrices
     // ========================================================================
-    // GPU DG operations always use the Lagrange (Nodal) basis at the
-    // quadrature points.  The DG weak form is basis-independent: any
-    // choice of test/trial functions spanning the same polynomial space
-    // yields the same dU/dt at quadrature points (in exact arithmetic).
-    // The hierarchical Modal mass matrix is catastrophically ill-conditioned
-    // on curved Q2 elements (condition numbers > 10^10), so Lagrange is
-    // used for numerical stability.  The user's BasisType choice still
-    // controls the shock-sensor NodalToModal transform and VTK output.
-    // ========================================================================
-    std::unique_ptr<BasisPoly> gpuBasis1D;
-    if (inp->btype == "Modal") {
-        gpuBasis1D = BasisPoly::Create("Nodal", P, inp->ptype, zq, wq);
-        gpuBasis1D->ConstructBasis();
-    }
-    BasisPoly* gpuBasis = (inp->btype == "Modal") ? gpuBasis1D.get() : basis1D.get();
+    bool modalMode = (inp->btype == "Modal");
 
-    std::vector<std::vector<double>> Bmat = gpuBasis->GetB();
-    std::vector<std::vector<double>> Dmat = gpuBasis->GetD();
-    std::vector<std::vector<double>> blr  = gpuBasis->GetLeftRightBasisValues();
+    std::vector<std::vector<double>> Bmat = basis1D->GetB();
+    std::vector<std::vector<double>> Dmat = basis1D->GetD();
+    std::vector<std::vector<double>> blr  = basis1D->GetLeftRightBasisValues();
 
     std::vector<double> massLU;
     std::vector<int>    massPiv;
@@ -948,8 +1219,10 @@ int main(int argc, char* argv[])
         zVis[i] = -1.0 + 2.0 * i / (nVis - 1);
 
     std::vector<std::vector<double>> Bvis;
-    {
-        std::vector<double> zn = gpuBasis->GetZn();
+    if (modalMode)
+        evalModalBasis1D(P, zVis, Bvis);
+    else {
+        std::vector<double> zn = basis1D->GetZn();
         evalNodalBasis1D(P, inp->ptype, zn, zVis, Bvis);
     }
 
@@ -1073,11 +1346,39 @@ int main(int argc, char* argv[])
     for (int v = 0; v < NVAR2D; ++v)
         std::memcpy(&U_flat[v * totalDOF], U[v].data(), totalDOF * sizeof(double));
 
+    // In modal mode, project quadrature-point IC to modal coefficients
+    std::vector<double> U_coeff;
+    if (modalMode) {
+        U_coeff.resize(NVAR2D * nE * nmodes, 0.0);
+        for (int e = 0; e < nE; ++e)
+            for (int var = 0; var < NVAR2D; ++var) {
+                std::vector<double> proj(nmodes, 0.0);
+                for (int i = 0; i < P + 1; ++i)
+                    for (int j = 0; j < P + 1; ++j) {
+                        int m = i * (P + 1) + j;
+                        for (int qx = 0; qx < nq1d; ++qx)
+                            for (int qe = 0; qe < nq1d; ++qe) {
+                                int qIdx = e * nqVol + qx * nq1d + qe;
+                                double w = wq[qx] * wq[qe] * geom.detJ[qIdx];
+                                proj[m] += w * Bmat[i][qx] * Bmat[j][qe]
+                                         * U[var][qIdx];
+                            }
+                    }
+                for (int m = 0; m < nmodes; ++m) {
+                    double val = 0.0;
+                    for (int mp = 0; mp < nmodes; ++mp)
+                        val += Minv[e * nmodes * nmodes + m * nmodes + mp] * proj[mp];
+                    U_coeff[var * nE * nmodes + e * nmodes + m] = val;
+                }
+            }
+        std::cout << "IC projected to " << nE * nmodes << " modal coefficients" << std::endl;
+    }
+
     // ========================================================================
     // Allocate and initialise GPU
     // ========================================================================
     GPUSolverData gpu;
-    gpuAllocate(gpu, nE, nF, P, nq1d);
+    gpuAllocate(gpu, nE, nF, P, nq1d, modalMode);
     gpu.rhoInf = g_rhoInf;
     gpu.uInf   = g_uInf;
     gpu.vInf   = g_vInf;
@@ -1101,7 +1402,10 @@ int main(int argc, char* argv[])
         face_faceL.data(), face_faceR.data(),
         face_bcType.data());
 
-    gpuCopySolutionToDevice(gpu, U_flat.data());
+    if (modalMode)
+        gpuCopySolutionToDevice(gpu, U_coeff.data());
+    else
+        gpuCopySolutionToDevice(gpu, U_flat.data());
 
     // Face interpolation weights: Lagrange polynomials at GL points evaluated at z=±1
     {
@@ -1115,13 +1419,16 @@ int main(int argc, char* argv[])
     }
 
     // Nodal-to-modal transform for shock sensor.
-    // The GPU Ucoeff are always in the gpuBasis (Lagrange) coordinate system,
-    // so the transform must convert from Lagrange coefficients to Legendre.
+    // In modal mode with Legendre basis, coefficients are already Legendre → identity.
+    // In nodal mode, T = V^{-1} converts Lagrange coefficients to Legendre.
     {
         int P1 = P + 1;
         std::vector<double> T(P1 * P1, 0.0);
-        {
-            std::vector<double> zn = gpuBasis->GetZn();
+        if (modalMode) {
+            for (int i = 0; i < P1; ++i)
+                T[i * P1 + i] = 1.0;
+        } else {
+            std::vector<double> zn = basis1D->GetZn();
             std::vector<double> V(P1 * P1);
             for (int n = 0; n < P1; ++n)
                 for (int p = 0; p < P1; ++p) {
@@ -1163,7 +1470,8 @@ int main(int argc, char* argv[])
 
     std::cout << "GPU initialised: " << nE << " elements, P=" << P
               << ", nq1d=" << nq1d << ", nmodes=" << nmodes
-              << ", totalDOF=" << totalDOF << std::endl;
+              << ", totalDOF=" << totalDOF
+              << (modalMode ? " [MODAL]" : " [NODAL]") << std::endl;
 
     // ========================================================================
     // Time integration on GPU
@@ -1234,7 +1542,10 @@ int main(int argc, char* argv[])
             if (nanFound) {
                 std::cout << "\nNaN first detected at step " << globalStep << std::endl;
 
-                gpuCopyPrevSolutionToHost(gpu, U_flat.data());
+                if (modalMode)
+                    gpuCopyPrevQuadPointsToHost(gpu, U_flat.data());
+                else
+                    gpuCopyPrevSolutionToHost(gpu, U_flat.data());
                 for (int v = 0; v < NVAR2D; ++v)
                     std::memcpy(U[v].data(), &U_flat[v * totalDOF], totalDOF * sizeof(double));
 
@@ -1259,7 +1570,10 @@ int main(int argc, char* argv[])
             }
 
             if (inp->checkpoint > 0 && (globalStep + 1) % inp->checkpoint == 0 && !nanFound) {
-                gpuCopySolutionToHost(gpu, U_flat.data());
+                if (modalMode)
+                    gpuCopyQuadPointsToHost(gpu, U_flat.data());
+                else
+                    gpuCopySolutionToHost(gpu, U_flat.data());
                 for (int v = 0; v < NVAR2D; ++v)
                     std::memcpy(U[v].data(), &U_flat[v * totalDOF], totalDOF * sizeof(double));
 
@@ -1300,9 +1614,12 @@ int main(int argc, char* argv[])
         std::cout << "NaN detected -- simulation terminated early." << std::endl;
 
     // ========================================================================
-    // Copy solution back to host
+    // Copy solution back to host (quad-point values for VTK/error computation)
     // ========================================================================
-    gpuCopySolutionToHost(gpu, U_flat.data());
+    if (modalMode)
+        gpuCopyQuadPointsToHost(gpu, U_flat.data());
+    else
+        gpuCopySolutionToHost(gpu, U_flat.data());
     for (int v = 0; v < NVAR2D; ++v)
         std::memcpy(U[v].data(), &U_flat[v * totalDOF], totalDOF * sizeof(double));
 
@@ -1394,6 +1711,7 @@ int main(int argc, char* argv[])
 
         // Freeze forward state: populate Ucoeff and epsilon
         gpuComputeDGRHS(gpu, false, 0.0);
+        gpuSyncUcoeff(gpu);
         std::cout << "Forward solution frozen (Ucoeff/epsilon)." << std::endl;
 
         // Allocate adjoint data
@@ -1416,7 +1734,7 @@ int main(int argc, char* argv[])
         adjointComputeObjectiveGradient(adj, gpu, chordRef, forceNx, forceNy);
         std::cout << "Objective gradient (dJ/dU) computed." << std::endl;
 
-        int solSize = NVAR_GPU * totalDOF;
+        int solSize = NVAR_GPU * adj.primaryDOF;
         double adjTol = inp->adjTol;
         int adjMaxIter = inp->adjMaxIter;
 
@@ -1460,10 +1778,8 @@ int main(int argc, char* argv[])
             }
 
             if ((iter + 1) % 100 == 0 || iter < 5) {
-                adjointComputeRHS(adj, gpu, false);
-
                 double perVarNorms[4];
-                adjointResidualNormPerVar(adj, totalDOF, perVarNorms);
+                adjointResidualNormPerVar(adj, adj.primaryDOF, perVarNorms);
                 double resL2 = 0.0;
                 for (int v = 0; v < 4; ++v) resL2 += perVarNorms[v] * perVarNorms[v];
                 resL2 = std::sqrt(resL2);
@@ -1486,22 +1802,26 @@ int main(int argc, char* argv[])
             }
 
             if (inp->checkpoint > 0 && (iter + 1) % inp->checkpoint == 0 && !adjNanFound) {
-                adjointCopySolutionToHost(adj, psi_chk.data(), solSize);
+                // Always get quad-point values for VTK output
+                std::vector<double> psi_quad_chk(NVAR_GPU * totalDOF);
+                adjointCopyQuadPointsToHost(adj, gpu, psi_quad_chk.data());
 
                 std::vector<std::vector<double>> psi_vtk(NVAR2D);
                 for (int v = 0; v < NVAR2D; ++v) {
                     psi_vtk[v].resize(totalDOF);
-                    std::memcpy(psi_vtk[v].data(), &psi_chk[v * totalDOF],
+                    std::memcpy(psi_vtk[v].data(), &psi_quad_chk[v * totalDOF],
                                 totalDOF * sizeof(double));
                 }
 
                 std::vector<double> eta_chk = computeErrorIndicator(
-                    psi_chk.data(), nE, nqVol, nq1d, totalDOF, wq, geom);
+                    psi_quad_chk.data(), nE, nqVol, nq1d, totalDOF, wq, geom);
 
                 std::string chkVtk = "adjoint_checkpoint_" + std::to_string(iter + 1) + ".vtk";
                 writeAdjointVTK(chkVtk, mesh, geom, psi_vtk, Bmat, Bvis,
                                 Minv, wq, zVis, P, nq1d, eta_chk);
 
+                // Save raw coefficients (or quad values) for restart
+                adjointCopySolutionToHost(adj, psi_chk.data(), solSize);
                 std::string chkBin = "adjoint_restart_" + std::to_string(iter + 1) + ".bin";
                 writeAdjointRestart(chkBin, psi_chk.data(), solSize, nE, nqVol, iter + 1);
 
@@ -1517,9 +1837,9 @@ int main(int argc, char* argv[])
         auto adjElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(tAdjEnd - tAdjStart);
         std::cout << "\nAdjoint wall-clock time: " << adjElapsed.count() << " ms" << std::endl;
 
-        // Copy adjoint solution back and write VTK
-        std::vector<double> psi_flat(solSize);
-        adjointCopySolutionToHost(adj, psi_flat.data(), solSize);
+        // Copy adjoint solution back (quad-point values for VTK)
+        std::vector<double> psi_flat(NVAR_GPU * totalDOF);
+        adjointCopyQuadPointsToHost(adj, gpu, psi_flat.data());
 
         std::vector<std::vector<double>> psi(NVAR2D);
         for (int v = 0; v < NVAR2D; ++v) {
@@ -1537,8 +1857,11 @@ int main(int argc, char* argv[])
         std::cout << "Adjoint solution written to adjoint2d_final.vtk" << std::endl;
         std::cout << "Adjoint solution-point output written to adjoint2d_final_solpts.vtk" << std::endl;
 
-        if (!adjNanFound)
-            writeAdjointRestart("adjoint_restart.bin", psi_flat.data(), solSize, nE, nqVol, adjMaxIter);
+        if (!adjNanFound) {
+            std::vector<double> psi_raw(solSize);
+            adjointCopySolutionToHost(adj, psi_raw.data(), solSize);
+            writeAdjointRestart("adjoint_restart.bin", psi_raw.data(), solSize, nE, nqVol, adjMaxIter);
+        }
 
         // Finite-difference gradient check
         if (inp->adjFDCheck) {
@@ -1556,11 +1879,13 @@ int main(int argc, char* argv[])
                 U_pert[var * totalDOF + dof] += fd_eps;
                 gpuCopySolutionToDevice(gpu, U_pert.data());
                 gpuComputeDGRHS(gpu, false, 0.0);
+                gpuSyncUcoeff(gpu);
                 double Jp = adjointComputeForceCoeff(adj, gpu, chordRef, forceNx, forceNy);
 
                 U_pert[var * totalDOF + dof] -= 2.0 * fd_eps;
                 gpuCopySolutionToDevice(gpu, U_pert.data());
                 gpuComputeDGRHS(gpu, false, 0.0);
+                gpuSyncUcoeff(gpu);
                 double Jm = adjointComputeForceCoeff(adj, gpu, chordRef, forceNx, forceNy);
 
                 double fd_grad = (Jp - Jm) / (2.0 * fd_eps);
@@ -1575,6 +1900,7 @@ int main(int argc, char* argv[])
 
             gpuCopySolutionToDevice(gpu, U_flat.data());
             gpuComputeDGRHS(gpu, false, 0.0);
+            gpuSyncUcoeff(gpu);
         }
 
         // Write sensitivity indicator

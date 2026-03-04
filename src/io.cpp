@@ -246,6 +246,10 @@ Inputs2D* ReadXmlFile2D(const char* filename)
         inp->runAdjoint = (val == "1" || val == "true" || val == "True");
     }
 
+    if (param_map.count("PMin"))               inp->pMin = std::stoi(param_map["PMin"]);
+    if (param_map.count("PMax"))               inp->pMax = std::stoi(param_map["PMax"]);
+    if (param_map.count("ErrorIndicatorFile")) inp->errorIndicatorFile = param_map["ErrorIndicatorFile"];
+
     if (inp->nquad == 0)
         inp->nquad = inp->porder + 1;
 
@@ -279,6 +283,11 @@ Inputs2D* ReadXmlFile2D(const char* filename)
     std::cout << "AdjObjective    = " << inp->adjObjective << std::endl;
     if (inp->checkpoint > 0)
         std::cout << "Checkpoint      = every " << inp->checkpoint << " steps" << std::endl;
+    if (inp->pMin > 0 && inp->pMax > 0) {
+        std::cout << "VariableP       = ON (PMin=" << inp->pMin << ", PMax=" << inp->pMax << ")" << std::endl;
+        if (!inp->errorIndicatorFile.empty())
+            std::cout << "ErrorIndicator  = " << inp->errorIndicatorFile << std::endl;
+    }
     std::cout << "===================================================" << std::endl;
 
     return inp;

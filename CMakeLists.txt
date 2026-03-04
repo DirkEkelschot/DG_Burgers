@@ -41,6 +41,7 @@ add_executable(app2d
     src/euler2d.cpp
     src/euler2d_gpu.cu
     src/adjoint2d_gpu.cu
+    src/p_adapt.cpp
     2D-Euler-app.cpp
 )
 if(DEFAULT_BLAS_ROOT AND EXISTS "${DEFAULT_BLAS_ROOT}/include")
@@ -67,6 +68,7 @@ add_executable(app2d_adjoint
     src/euler2d.cpp
     src/euler2d_gpu.cu
     src/adjoint2d_gpu.cu
+    src/p_adapt.cpp
     2D-Euler-adjoint-app.cpp
 )
 if(DEFAULT_BLAS_ROOT AND EXISTS "${DEFAULT_BLAS_ROOT}/include")

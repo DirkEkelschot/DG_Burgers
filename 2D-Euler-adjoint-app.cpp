@@ -18,8 +18,14 @@
 #include "src/euler2d.h"
 #include "src/euler2d_gpu.h"
 #include "src/adjoint2d_gpu.h"
+#include "src/p_adapt.h"
 
 using namespace polylib;
+
+extern "C" {
+    extern void dgetrf_(int*, int*, double*, int*, int[], int*);
+    extern void dgetrs_(unsigned char*, int*, int*, double*, int*, int[], double[], int*, int*);
+}
 
 static double g_rhoInf, g_uInf, g_vInf, g_pInf;
 
@@ -35,15 +41,9 @@ static void evalModalBasis1D(int P, const std::vector<double>& zpts,
     for (int p = 0; p <= P; ++p)
         for (int i = 0; i < npts; ++i) {
             double z = zpts[i];
-            if (p == 0)
-                Bvis[p][i] = (1.0 - z) / 2.0;
-            else if (p == P)
-                Bvis[p][i] = (1.0 + z) / 2.0;
-            else {
-                double val;
-                polylib::jacobfd(1, &z, &val, NULL, p - 1, 1.0, 1.0);
-                Bvis[p][i] = (1.0 - z) / 2.0 * (1.0 + z) / 2.0 * val;
-            }
+            double val;
+            polylib::jacobfd(1, &z, &val, NULL, p, 0.0, 0.0);
+            Bvis[p][i] = val;
         }
 }
 
@@ -407,6 +407,479 @@ static void printProgressBar(int current, int total, int width = 50)
 }
 
 // ============================================================================
+// Variable-P adjoint solver
+// ============================================================================
+
+static int runVariablePAdjoint(Inputs2D* inp, Mesh2D& mesh)
+{
+    int nE = mesh.nElements, nF = mesh.nFaces;
+    int pMin = inp->pMin, pMax = inp->pMax;
+    int nq1d = pMax + 2;
+    int nqVol = nq1d * nq1d;
+    int totalDOF = nE * nqVol;
+    int P = pMax, P1 = P + 1;
+    int nmodes = P1 * P1;
+
+    // Read P distribution
+    std::vector<int> elemP;
+    if (!inp->errorIndicatorFile.empty()) {
+        std::vector<double> eta = readErrorIndicator(inp->errorIndicatorFile, nE);
+        elemP = assignElementP(eta, pMin, pMax);
+    } else {
+        elemP.assign(nE, pMax);
+        std::cout << "No error indicator file; using P=" << pMax << " everywhere" << std::endl;
+    }
+    auto groups = buildPGroups(elemP, pMin, pMax);
+
+    // Quadrature and geometry at common nq1d
+    std::vector<double> zq(nq1d, 0.0), wq(nq1d, 0.0);
+    polylib::zwgl(zq.data(), wq.data(), nq1d);
+    std::vector<double> xiVol(nqVol), etaVol(nqVol);
+    for (int i = 0; i < nq1d; ++i)
+        for (int j = 0; j < nq1d; ++j) {
+            xiVol[i * nq1d + j] = zq[i];
+            etaVol[i * nq1d + j] = zq[j];
+        }
+    GeomData2D geom = computeGeometry(mesh, xiVol, etaVol, nqVol, zq, nq1d);
+
+    // Freestream
+    double AoA_rad = inp->AoA * M_PI / 180.0;
+    g_rhoInf = 1.0;
+    g_pInf = 1.0 / (GAMMA * inp->Mach * inp->Mach);
+    double cInfVal = std::sqrt(GAMMA * g_pInf / g_rhoInf);
+    g_uInf = inp->Mach * cInfVal * std::cos(AoA_rad);
+    g_vInf = inp->Mach * cInfVal * std::sin(AoA_rad);
+
+    // Build pMax basis for GPU static data (Nodal for the forward GPU)
+    auto gpuBasisMax = BasisPoly::Create("Nodal", pMax, inp->ptype, zq, wq);
+    gpuBasisMax->ConstructBasis();
+    auto BmatMax = gpuBasisMax->GetB();
+    auto DmatMax = gpuBasisMax->GetD();
+    auto blrMax = gpuBasisMax->GetLeftRightBasisValues();
+
+    // Per-element Minv: each element uses its own P's basis, stored in a
+    // nmodes_max * nmodes_max block (zero-padded for low-P elements).
+    std::vector<double> Minv(nE * nmodes * nmodes, 0.0);
+    for (auto& [p, ginfo] : groups) {
+        int gP1 = p + 1, gnm = gP1 * gP1;
+        std::vector<double> zq_c(zq), wq_c(wq);
+        auto basis_g = BasisPoly::Create("Nodal", p, inp->ptype, zq_c, wq_c);
+        basis_g->ConstructBasis();
+        auto Bg = basis_g->GetB();
+        for (int eIdx = 0; eIdx < (int)ginfo.globalElemIdx.size(); ++eIdx) {
+            int eG = ginfo.globalElemIdx[eIdx];
+            std::vector<double> Mlocal(gnm * gnm, 0.0);
+            for (int qx = 0; qx < nq1d; ++qx)
+                for (int qe = 0; qe < nq1d; ++qe) {
+                    int qIdx = eG * nqVol + qx * nq1d + qe;
+                    double w = wq[qx] * wq[qe] * geom.detJ[qIdx];
+                    for (int i1 = 0; i1 < gP1; ++i1)
+                        for (int j1 = 0; j1 < gP1; ++j1) {
+                            int row = i1 * gP1 + j1;
+                            double phiR = Bg[i1][qx] * Bg[j1][qe];
+                            for (int i2 = 0; i2 < gP1; ++i2)
+                                for (int j2 = 0; j2 < gP1; ++j2)
+                                    Mlocal[row * gnm + i2 * gP1 + j2] += w * phiR * Bg[i2][qx] * Bg[j2][qe];
+                        }
+                }
+            int INFO;
+            std::vector<int> piv(gnm);
+            dgetrf_(&gnm, &gnm, Mlocal.data(), &gnm, piv.data(), &INFO);
+            std::vector<double> MinvLocal(gnm * gnm, 0.0);
+            for (int i = 0; i < gnm; ++i) MinvLocal[i * gnm + i] = 1.0;
+            unsigned char TR = 'N'; int NR = gnm;
+            dgetrs_(&TR, &gnm, &NR, Mlocal.data(), &gnm, piv.data(), MinvLocal.data(), &gnm, &INFO);
+            // Store in global Minv (zero-padded to nmodes * nmodes)
+            for (int r = 0; r < gnm; ++r)
+                for (int c = 0; c < gnm; ++c)
+                    Minv[eG * nmodes * nmodes + r * nmodes + c] = MinvLocal[r * gnm + c];
+        }
+    }
+
+    // Load forward solution
+    std::vector<std::vector<double>> U(NVAR2D);
+    for (int v = 0; v < NVAR2D; ++v) U[v].resize(totalDOF, 0.0);
+    double time_restart = 0.0;
+    if (!inp->restartfile.empty()) {
+        int iterDummy = 0;
+        std::ifstream in(inp->restartfile, std::ios::binary);
+        int nvar, nE_f, nqVol_f;
+        in.read(reinterpret_cast<char*>(&nvar), sizeof(int));
+        in.read(reinterpret_cast<char*>(&nE_f), sizeof(int));
+        in.read(reinterpret_cast<char*>(&nqVol_f), sizeof(int));
+        in.read(reinterpret_cast<char*>(&time_restart), sizeof(double));
+        if (nvar != NVAR2D || nE_f != nE || nqVol_f != nqVol) {
+            std::cout << "Restart file mismatch" << std::endl;
+            return 1;
+        }
+        for (int v = 0; v < NVAR2D; ++v) {
+            U[v].resize(totalDOF);
+            in.read(reinterpret_cast<char*>(U[v].data()), totalDOF * sizeof(double));
+        }
+        in.close();
+        std::cout << "Forward restart loaded (time = " << time_restart << ")" << std::endl;
+    } else {
+        std::cout << "Error: adjoint solver requires a restart file" << std::endl;
+        return 1;
+    }
+
+    // Set up GPU
+    GPUSolverData gpu;
+    gpuAllocate(gpu, nE, nF, pMax, nq1d);
+    gpu.rhoInf = g_rhoInf; gpu.uInf = g_uInf;
+    gpu.vInf = g_vInf; gpu.pInf = g_pInf;
+    gpu.fluxType = (inp->fluxtype == "HLLC") ? 1 : 0;
+    gpu.useAV = inp->useAV;
+    gpu.AVkappa = inp->AVkappa;
+    gpu.AVs0 = (inp->AVs0 != 0.0) ? inp->AVs0
+               : -(4.25 * std::log10((double)std::max(pMax, 1)) + 0.5);
+    gpu.AVscale = inp->AVscale;
+
+    // Flatten and upload
+    std::vector<double> Bmat_flat(P1 * nq1d), Dmat_flat(P1 * nq1d), blr_flat(P1 * 2);
+    for (int i = 0; i < P1; ++i) {
+        for (int q = 0; q < nq1d; ++q) {
+            Bmat_flat[i * nq1d + q] = BmatMax[i][q];
+            Dmat_flat[i * nq1d + q] = DmatMax[i][q];
+        }
+        blr_flat[i * 2] = blrMax[i][0];
+        blr_flat[i * 2 + 1] = blrMax[i][1];
+    }
+    std::vector<int> e2f(nE * 4), feL(nF), feR(nF), ffL(nF), ffR(nF), fbc(nF, 0);
+    for (int e = 0; e < nE; ++e)
+        for (int lf = 0; lf < 4; ++lf) e2f[e * 4 + lf] = mesh.elem2face[e][lf];
+    for (int f = 0; f < nF; ++f) {
+        feL[f] = mesh.faces[f].elemL; feR[f] = mesh.faces[f].elemR;
+        ffL[f] = mesh.faces[f].faceL; ffR[f] = mesh.faces[f].faceR;
+        if (mesh.faces[f].elemR < 0) {
+            int tag = mesh.faces[f].bcTag;
+            if (inp->testcase == "NACA0012") {
+                if (tag == 1) fbc[f] = 1; else fbc[f] = 2;
+            }
+        }
+    }
+    gpuCopyStaticData(gpu,
+        geom.detJ.data(), geom.dxidx.data(), geom.dxidy.data(),
+        geom.detadx.data(), geom.detady.data(),
+        geom.faceNx.data(), geom.faceNy.data(), geom.faceJac.data(),
+        geom.faceXPhys.data(), geom.faceYPhys.data(),
+        Bmat_flat.data(), Dmat_flat.data(), blr_flat.data(),
+        Minv.data(), wq.data(),
+        e2f.data(), feL.data(), feR.data(), ffL.data(), ffR.data(), fbc.data());
+
+    std::vector<double> U_flat(NVAR2D * totalDOF);
+    for (int v = 0; v < NVAR2D; ++v)
+        std::memcpy(&U_flat[v * totalDOF], U[v].data(), totalDOF * sizeof(double));
+    gpuCopySolutionToDevice(gpu, U_flat.data());
+
+    // Face interpolation weights
+    {
+        std::vector<double> interpL(nq1d), interpR(nq1d);
+        std::vector<double> zq_m(zq);
+        for (int k = 0; k < nq1d; ++k) {
+            interpL[k] = polylib::hgj(k, -1.0, zq_m.data(), nq1d, 0.0, 0.0);
+            interpR[k] = polylib::hgj(k, 1.0, zq_m.data(), nq1d, 0.0, 0.0);
+        }
+        gpuSetFaceInterp(interpL.data(), interpR.data(), nq1d);
+    }
+
+    // NodalToModal (Nodal basis, V^{-1})
+    {
+        std::vector<double> zn = gpuBasisMax->GetZn();
+        std::vector<double> T(P1 * P1, 0.0);
+        std::vector<double> V(P1 * P1);
+        for (int n = 0; n < P1; ++n)
+            for (int p = 0; p < P1; ++p) {
+                double val;
+                polylib::jacobfd(1, &zn[n], &val, NULL, p, 0.0, 0.0);
+                V[n * P1 + p] = val;
+            }
+        std::vector<double> aug(P1 * 2 * P1);
+        for (int r = 0; r < P1; ++r)
+            for (int c = 0; c < P1; ++c) {
+                aug[r * 2 * P1 + c] = V[r * P1 + c];
+                aug[r * 2 * P1 + P1 + c] = (r == c) ? 1.0 : 0.0;
+            }
+        for (int col = 0; col < P1; ++col) {
+            int pivot = col;
+            for (int r = col + 1; r < P1; ++r)
+                if (std::fabs(aug[r * 2*P1 + col]) > std::fabs(aug[pivot * 2*P1 + col]))
+                    pivot = r;
+            if (pivot != col)
+                for (int c = 0; c < 2 * P1; ++c)
+                    std::swap(aug[col * 2*P1 + c], aug[pivot * 2*P1 + c]);
+            double di = 1.0 / aug[col * 2*P1 + col];
+            for (int c = 0; c < 2 * P1; ++c) aug[col * 2*P1 + c] *= di;
+            for (int r = 0; r < P1; ++r) {
+                if (r == col) continue;
+                double f = aug[r * 2*P1 + col];
+                for (int c = 0; c < 2 * P1; ++c) aug[r * 2*P1 + c] -= f * aug[col * 2*P1 + c];
+            }
+        }
+        for (int r = 0; r < P1; ++r)
+            for (int c = 0; c < P1; ++c)
+                T[r * P1 + c] = aug[r * 2*P1 + P1 + c];
+        gpuSetNodalToModal(T.data(), P1);
+        adjointGpuSetNodalToModal(T.data(), P1);
+    }
+
+    // Freeze forward state: one RHS per P-group to populate Ucoeff
+    // Use pMax for the global forward RHS (all elements get pMax basis)
+    gpuComputeDGRHS(gpu, false, 0.0);
+    gpuSyncUcoeff(gpu);
+    std::cout << "Forward state frozen." << std::endl;
+
+    // Set up per-group adjoint basis data
+    std::map<int, AdjointPGroup> adjGroups;
+    for (auto& [p, ginfo] : groups) {
+        int nEG = (int)ginfo.globalElemIdx.size();
+        AdjointPGroup& ag = adjGroups[p];
+        adjointAllocatePGroup(ag, p, nEG);
+        adjointUploadPGroupElemIdx(ag, ginfo.globalElemIdx.data());
+
+        std::vector<double> zq_c(zq), wq_c(wq);
+        auto basis = BasisPoly::Create("Nodal", p, inp->ptype, zq_c, wq_c);
+        basis->ConstructBasis();
+        auto Bg = basis->GetB();
+        auto Dg = basis->GetD();
+        auto blrg = basis->GetLeftRightBasisValues();
+        int gP1 = p + 1;
+
+        ag.h_Bmat.resize(gP1 * nq1d);
+        ag.h_Dmat.resize(gP1 * nq1d);
+        ag.h_blr.resize(gP1 * 2);
+        for (int i = 0; i < gP1; ++i) {
+            for (int q = 0; q < nq1d; ++q) {
+                ag.h_Bmat[i * nq1d + q] = Bg[i][q];
+                ag.h_Dmat[i * nq1d + q] = Dg[i][q];
+            }
+            ag.h_blr[i * 2] = blrg[i][0];
+            ag.h_blr[i * 2 + 1] = blrg[i][1];
+        }
+        ag.h_wq.assign(wq.begin(), wq.end());
+
+        std::vector<double> zn = basis->GetZn();
+        ag.h_NodalToModal.resize(gP1 * gP1);
+        std::vector<double> Vg(gP1 * gP1);
+        for (int n = 0; n < gP1; ++n)
+            for (int pp = 0; pp < gP1; ++pp) {
+                double val;
+                polylib::jacobfd(1, &zn[n], &val, NULL, pp, 0.0, 0.0);
+                Vg[n * gP1 + pp] = val;
+            }
+        std::vector<double> augG(gP1 * 2 * gP1);
+        for (int r = 0; r < gP1; ++r)
+            for (int c = 0; c < gP1; ++c) {
+                augG[r * 2 * gP1 + c] = Vg[r * gP1 + c];
+                augG[r * 2 * gP1 + gP1 + c] = (r == c) ? 1.0 : 0.0;
+            }
+        for (int col = 0; col < gP1; ++col) {
+            int pivot = col;
+            for (int r = col + 1; r < gP1; ++r)
+                if (std::fabs(augG[r * 2*gP1 + col]) > std::fabs(augG[pivot * 2*gP1 + col]))
+                    pivot = r;
+            if (pivot != col)
+                for (int c = 0; c < 2 * gP1; ++c)
+                    std::swap(augG[col * 2*gP1 + c], augG[pivot * 2*gP1 + c]);
+            double di = 1.0 / augG[col * 2*gP1 + col];
+            for (int c = 0; c < 2 * gP1; ++c) augG[col * 2*gP1 + c] *= di;
+            for (int r = 0; r < gP1; ++r) {
+                if (r == col) continue;
+                double f = augG[r * 2*gP1 + col];
+                for (int c = 0; c < 2 * gP1; ++c) augG[r * 2*gP1 + c] -= f * augG[col * 2*gP1 + c];
+            }
+        }
+        for (int r = 0; r < gP1; ++r)
+            for (int c = 0; c < gP1; ++c)
+                ag.h_NodalToModal[r * gP1 + c] = augG[r * 2*gP1 + gP1 + c];
+
+        std::cout << "  Adjoint P-group P=" << p << ": " << nEG << " elements" << std::endl;
+    }
+
+    // Adjoint setup
+    double chordRef = inp->adjChordRef;
+    std::string adjObjective = inp->adjObjective;
+    double forceNx, forceNy;
+    if (adjObjective == "Drag") {
+        forceNx = -std::cos(AoA_rad); forceNy = -std::sin(AoA_rad);
+    } else {
+        forceNx = std::sin(AoA_rad); forceNy = -std::cos(AoA_rad);
+    }
+
+    AdjointGPUData adj;
+    adjointGpuAllocate(adj, gpu);
+    adj.chordRef = chordRef;
+    adj.fullAV = (inp->btype == "Modal");
+    adjointGpuSetBasisData(Bmat_flat.data(), Dmat_flat.data(),
+                           blr_flat.data(), wq.data(), P1, nq1d);
+    adjointComputeFrozenAlpha(adj, gpu);
+
+    double objVal = adjointComputeForceCoeff(adj, gpu, chordRef, forceNx, forceNy);
+    std::cout << "Objective = " << adjObjective << " = " << objVal << std::endl;
+    adjointComputeObjectiveGradient(adj, gpu, chordRef, forceNx, forceNy);
+
+    int solSize = NVAR_GPU * adj.primaryDOF;
+    int adjMaxIter = inp->adjMaxIter;
+    double adjTol = inp->adjTol;
+    double CFL = inp->CFL;
+    double dt = inp->dt;
+
+    std::cout << "Variable-P adjoint: " << nE << " elements, PMin=" << pMin
+              << ", PMax=" << pMax << ", maxIter=" << adjMaxIter << std::endl;
+
+    int iterStart = 0;
+    if (!inp->adjRestartFile.empty()) {
+        std::vector<double> psi_restart(solSize);
+        if (!readAdjointRestart(inp->adjRestartFile, psi_restart.data(),
+                                solSize, nE, nqVol, iterStart)) {
+            std::cout << "Adjoint restart failed, exiting." << std::endl;
+            for (auto& [p, ag] : adjGroups) adjointFreePGroup(ag);
+            adjointGpuFree(adj);
+            gpuFree(gpu);
+            return 1;
+        }
+        adjointCopySolutionToDevice(adj, psi_restart.data(), solSize);
+        std::cout << "Adjoint restarting from iteration " << iterStart << std::endl;
+    }
+
+    // Adjoint iteration
+    auto tStart = std::chrono::high_resolution_clock::now();
+    bool converged = false, nanFound = false;
+
+    auto computeAdjRHS = [&](bool usePsiTmp) {
+        adjointZeroCoeffArrays(adj, gpu);
+        for (auto& [p, ag] : adjGroups)
+            adjointComputeRHS_group(adj, gpu, ag, usePsiTmp);
+        adjointAddObjectiveGradient(adj, gpu);
+    };
+
+    std::vector<double> psi_chk(solSize);
+
+    std::ofstream csvFile;
+    if (iterStart > 0) {
+        csvFile.open("adjoint_residual_history.csv", std::ios::app);
+    } else {
+        csvFile.open("adjoint_residual_history.csv");
+        csvFile << "iter,lambda_rho,lambda_rhou,lambda_rhov,lambda_rhoE\n";
+    }
+
+    for (int iter = iterStart; iter < adjMaxIter && !converged && !nanFound; ++iter) {
+        if (CFL > 0.0) dt = gpuComputeCFL(gpu, CFL, pMax);
+
+        computeAdjRHS(false);
+        adjointRK4Stage(adj, dt, 1, solSize);
+        computeAdjRHS(true);
+        adjointRK4Stage(adj, dt, 2, solSize);
+        computeAdjRHS(true);
+        adjointRK4Stage(adj, dt, 3, solSize);
+        computeAdjRHS(true);
+        adjointRK4Stage(adj, dt, 4, solSize);
+
+        nanFound = adjointCheckNaN(adj, solSize);
+        if (nanFound) {
+            std::cout << "\nNaN detected in adjoint at iteration " << iter << std::endl;
+            break;
+        }
+
+        if ((iter + 1) % 100 == 0 || iter < 5) {
+            double perVarNorms[4];
+            adjointResidualNormPerVar(adj, adj.primaryDOF, perVarNorms);
+            double resL2 = 0.0;
+            for (int v = 0; v < 4; ++v) resL2 += perVarNorms[v] * perVarNorms[v];
+            resL2 = std::sqrt(resL2);
+
+            csvFile << (iter + 1) << "," << perVarNorms[0] << "," << perVarNorms[1]
+                    << "," << perVarNorms[2] << "," << perVarNorms[3] << "\n";
+            csvFile.flush();
+
+            std::cout << "Adjoint iter " << std::setw(6) << (iter+1)
+                      << "  dt=" << std::scientific << std::setprecision(4) << dt
+                      << "  |res|=" << resL2 << std::endl;
+
+            if (resL2 < adjTol) {
+                converged = true;
+                std::cout << "Adjoint converged at iteration " << (iter+1) << std::endl;
+            }
+        }
+
+        if (inp->checkpoint > 0 && (iter + 1) % inp->checkpoint == 0 && !nanFound) {
+            std::vector<double> psi_quad_chk(NVAR_GPU * totalDOF);
+            adjointCopyQuadPointsToHost(adj, gpu, psi_quad_chk.data());
+
+            std::vector<std::vector<double>> psi_vtk(NVAR2D);
+            for (int v = 0; v < NVAR2D; ++v) {
+                psi_vtk[v].resize(totalDOF);
+                std::memcpy(psi_vtk[v].data(), &psi_quad_chk[v * totalDOF],
+                            totalDOF * sizeof(double));
+            }
+
+            std::vector<double> eta_chk = computeErrorIndicator(
+                psi_quad_chk.data(), nE, nqVol, nq1d, totalDOF, wq, geom);
+
+            std::string chkVtk = "adjoint_checkpoint_" + std::to_string(iter + 1) + ".vtk";
+            writeAdjointVTK_solpts(chkVtk, mesh, geom, psi_vtk, zq, nq1d, inp->ptype, eta_chk);
+
+            std::vector<double> psi_raw(solSize);
+            adjointCopySolutionToHost(adj, psi_raw.data(), solSize);
+            std::string chkBin = "adjoint_restart_" + std::to_string(iter + 1) + ".bin";
+            writeAdjointRestart(chkBin, psi_raw.data(), solSize, nE, nqVol, iter + 1);
+
+            std::cout << "\nAdjoint checkpoint at iteration " << (iter + 1) << std::endl;
+        }
+
+        printProgressBar(iter + 1, adjMaxIter);
+    }
+    csvFile.close();
+
+    auto tEnd = std::chrono::high_resolution_clock::now();
+    std::cout << "\nAdjoint wall-clock time: "
+              << std::chrono::duration_cast<std::chrono::milliseconds>(tEnd - tStart).count()
+              << " ms" << std::endl;
+
+    // Write adjoint output at quad points
+    std::vector<double> psi_flat(NVAR_GPU * totalDOF);
+    adjointCopyQuadPointsToHost(adj, gpu, psi_flat.data());
+
+    std::vector<std::vector<double>> psi(NVAR2D);
+    for (int v = 0; v < NVAR2D; ++v) {
+        psi[v].resize(totalDOF);
+        std::memcpy(psi[v].data(), &psi_flat[v * totalDOF], totalDOF * sizeof(double));
+    }
+
+    writeAdjointVTK_solpts("adjoint2d_final_solpts.vtk", mesh, geom, psi, zq, nq1d, inp->ptype);
+    std::cout << "Adjoint output written to adjoint2d_final_solpts.vtk" << std::endl;
+
+    // Error indicator
+    std::vector<double> eta = computeErrorIndicator(
+        psi_flat.data(), nE, nqVol, nq1d, totalDOF, wq, geom);
+
+    if (!nanFound) {
+        std::vector<double> psi_raw(solSize);
+        adjointCopySolutionToHost(adj, psi_raw.data(), solSize);
+        writeAdjointRestart("adjoint_restart.bin", psi_raw.data(), solSize, nE, nqVol, adjMaxIter);
+    }
+
+    {
+        double eta_max = *std::max_element(eta.begin(), eta.end());
+        double eta_sum = 0.0;
+        for (auto& v : eta) eta_sum += v;
+        std::cout << "\nSensitivity: max(eta)=" << eta_max << "  sum(eta)=" << eta_sum << std::endl;
+
+        std::ofstream efile("error_indicator.dat");
+        efile << "# element   eta\n";
+        for (int e = 0; e < nE; ++e)
+            efile << e << " " << eta[e] << "\n";
+        efile.close();
+        std::cout << "Sensitivity indicators written to error_indicator.dat" << std::endl;
+    }
+
+    for (auto& [p, ag] : adjGroups) adjointFreePGroup(ag);
+    adjointGpuFree(adj);
+    gpuFree(gpu);
+    return 0;
+}
+
+// ============================================================================
 // main
 // ============================================================================
 
@@ -441,6 +914,13 @@ int main(int argc, char* argv[])
     std::cout << "Mesh: " << mesh.nElements << " elements, "
               << mesh.nFaces << " faces" << std::endl;
 
+    // Variable-P mode
+    if (inp->pMin > 0 && inp->pMax > 0) {
+        int ret = runVariablePAdjoint(inp, mesh);
+        delete inp;
+        return ret;
+    }
+
     // ========================================================================
     // Set up quadrature and basis
     // ========================================================================
@@ -470,14 +950,10 @@ int main(int argc, char* argv[])
     GeomData2D geom = computeGeometry(mesh, xiVol, etaVol, nqVol, zq, nq1d);
 
     // ========================================================================
-    // Mass matrices (Lagrange basis for GPU; see 2D-Euler-app.cpp comment)
+    // Mass matrices
     // ========================================================================
-    std::unique_ptr<BasisPoly> gpuBasis1D;
-    if (inp->btype == "Modal") {
-        gpuBasis1D = BasisPoly::Create("Nodal", P, inp->ptype, zq, wq);
-        gpuBasis1D->ConstructBasis();
-    }
-    BasisPoly* gpuBasis = (inp->btype == "Modal") ? gpuBasis1D.get() : basis1D.get();
+    bool modalMode = (inp->btype == "Modal");
+    BasisPoly* gpuBasis = basis1D.get();
 
     std::vector<std::vector<double>> Bmat = gpuBasis->GetB();
     std::vector<std::vector<double>> Dmat = gpuBasis->GetD();
@@ -588,7 +1064,7 @@ int main(int argc, char* argv[])
     // Initialize forward GPU solver (for frozen state)
     // ========================================================================
     GPUSolverData gpu;
-    gpuAllocate(gpu, nE, nF, P, nq1d);
+    gpuAllocate(gpu, nE, nF, P, nq1d, modalMode);
     gpu.rhoInf = g_rhoInf; gpu.uInf = g_uInf;
     gpu.vInf   = g_vInf;   gpu.pInf = g_pInf;
     gpu.fluxType = (inp->fluxtype == "HLLC") ? 1 : 0;
@@ -610,7 +1086,35 @@ int main(int argc, char* argv[])
         face_faceL.data(), face_faceR.data(),
         face_bcType.data());
 
-    gpuCopySolutionToDevice(gpu, U_flat.data());
+    // In modal mode, project quad-point restart to modal coefficients
+    if (modalMode) {
+        std::vector<double> U_coeff(NVAR2D * nE * nmodes, 0.0);
+        for (int e = 0; e < nE; ++e)
+            for (int var = 0; var < NVAR2D; ++var) {
+                std::vector<double> proj(nmodes, 0.0);
+                for (int i = 0; i < P + 1; ++i)
+                    for (int j = 0; j < P + 1; ++j) {
+                        int m = i * (P + 1) + j;
+                        for (int qx = 0; qx < nq1d; ++qx)
+                            for (int qe = 0; qe < nq1d; ++qe) {
+                                int qIdx = e * nqVol + qx * nq1d + qe;
+                                double w = wq[qx] * wq[qe] * geom.detJ[qIdx];
+                                proj[m] += w * Bmat[i][qx] * Bmat[j][qe]
+                                         * U[var][qIdx];
+                            }
+                    }
+                for (int m = 0; m < nmodes; ++m) {
+                    double val = 0.0;
+                    for (int mp = 0; mp < nmodes; ++mp)
+                        val += Minv[e * nmodes * nmodes + m * nmodes + mp] * proj[mp];
+                    U_coeff[var * nE * nmodes + e * nmodes + m] = val;
+                }
+            }
+        gpuCopySolutionToDevice(gpu, U_coeff.data());
+        std::cout << "IC projected to " << nE * nmodes << " modal coefficients" << std::endl;
+    } else {
+        gpuCopySolutionToDevice(gpu, U_flat.data());
+    }
 
     {
         std::vector<double> interpL(nq1d), interpR(nq1d);
@@ -625,7 +1129,10 @@ int main(int argc, char* argv[])
     {
         int P1 = P + 1;
         std::vector<double> T(P1 * P1, 0.0);
-        {
+        if (modalMode) {
+            for (int i = 0; i < P1; ++i)
+                T[i * P1 + i] = 1.0;
+        } else {
             std::vector<double> zn = gpuBasis->GetZn();
             std::vector<double> V(P1 * P1);
             for (int n = 0; n < P1; ++n)
@@ -668,6 +1175,7 @@ int main(int argc, char* argv[])
 
     // Run one forward RHS to populate Ucoeff and epsilon
     gpuComputeDGRHS(gpu, false, 0.0);
+    gpuSyncUcoeff(gpu);
 
     std::cout << "Forward solution loaded and Ucoeff/epsilon frozen." << std::endl;
 
@@ -677,6 +1185,7 @@ int main(int argc, char* argv[])
     AdjointGPUData adj;
     adjointGpuAllocate(adj, gpu);
     adj.chordRef = chordRef;
+    adj.fullAV = (inp->btype == "Modal");
 
     adjointGpuSetBasisData(Bmat_flat.data(), Dmat_flat.data(),
                            blr_flat.data(), wq.data(), P + 1, nq1d);
@@ -693,7 +1202,7 @@ int main(int argc, char* argv[])
     adjointComputeObjectiveGradient(adj, gpu, chordRef, forceNx, forceNy);
     std::cout << "Objective gradient (dJ/dU) computed." << std::endl;
 
-    int solSize = NVAR_GPU * totalDOF;
+    int solSize = NVAR_GPU * adj.primaryDOF;
 
     // ========================================================================
     // Load adjoint restart if specified
@@ -760,10 +1269,8 @@ int main(int argc, char* argv[])
         }
 
         if ((iter + 1) % 100 == 0 || iter < 5) {
-            adjointComputeRHS(adj, gpu, false);
-
             double perVarNorms[4];
-            adjointResidualNormPerVar(adj, totalDOF, perVarNorms);
+            adjointResidualNormPerVar(adj, adj.primaryDOF, perVarNorms);
             double resL2 = 0.0;
             for (int v = 0; v < 4; ++v) resL2 += perVarNorms[v] * perVarNorms[v];
             resL2 = std::sqrt(resL2);
@@ -786,22 +1293,24 @@ int main(int argc, char* argv[])
         }
 
         if (inp->checkpoint > 0 && (iter + 1) % inp->checkpoint == 0 && !nanFound) {
-            adjointCopySolutionToHost(adj, psi_chk.data(), solSize);
+            std::vector<double> psi_quad_chk(NVAR_GPU * totalDOF);
+            adjointCopyQuadPointsToHost(adj, gpu, psi_quad_chk.data());
 
             std::vector<std::vector<double>> psi_vtk(NVAR2D);
             for (int v = 0; v < NVAR2D; ++v) {
                 psi_vtk[v].resize(totalDOF);
-                std::memcpy(psi_vtk[v].data(), &psi_chk[v * totalDOF],
+                std::memcpy(psi_vtk[v].data(), &psi_quad_chk[v * totalDOF],
                             totalDOF * sizeof(double));
             }
 
             std::vector<double> eta_chk = computeErrorIndicator(
-                psi_chk.data(), nE, nqVol, nq1d, totalDOF, wq, geom);
+                psi_quad_chk.data(), nE, nqVol, nq1d, totalDOF, wq, geom);
 
             std::string chkVtk = "adjoint_checkpoint_" + std::to_string(iter + 1) + ".vtk";
             writeAdjointVTK(chkVtk, mesh, geom, psi_vtk, Bmat, Bvis,
                             Minv, wq, zVis, P, nq1d, eta_chk);
 
+            adjointCopySolutionToHost(adj, psi_chk.data(), solSize);
             std::string chkBin = "adjoint_restart_" + std::to_string(iter + 1) + ".bin";
             writeAdjointRestart(chkBin, psi_chk.data(), solSize, nE, nqVol, iter + 1);
 
@@ -820,8 +1329,8 @@ int main(int argc, char* argv[])
     // ========================================================================
     // Copy adjoint solution back and write VTK
     // ========================================================================
-    std::vector<double> psi_flat(solSize);
-    adjointCopySolutionToHost(adj, psi_flat.data(), solSize);
+    std::vector<double> psi_flat(NVAR_GPU * totalDOF);
+    adjointCopyQuadPointsToHost(adj, gpu, psi_flat.data());
 
     std::vector<std::vector<double>> psi(NVAR2D);
     for (int v = 0; v < NVAR2D; ++v) {
@@ -838,8 +1347,11 @@ int main(int argc, char* argv[])
     std::cout << "Adjoint solution written to adjoint2d_final.vtk" << std::endl;
     std::cout << "Adjoint solution-point output written to adjoint2d_final_solpts.vtk" << std::endl;
 
-    if (!nanFound)
-        writeAdjointRestart("adjoint_restart.bin", psi_flat.data(), solSize, nE, nqVol, adjMaxIter);
+    if (!nanFound) {
+        std::vector<double> psi_raw(solSize);
+        adjointCopySolutionToHost(adj, psi_raw.data(), solSize);
+        writeAdjointRestart("adjoint_restart.bin", psi_raw.data(), solSize, nE, nqVol, adjMaxIter);
+    }
 
     // ========================================================================
     // Finite-difference gradient check (optional, on a few DOFs)
@@ -859,11 +1371,13 @@ int main(int argc, char* argv[])
             U_pert[var * totalDOF + dof] += fd_eps;
             gpuCopySolutionToDevice(gpu, U_pert.data());
             gpuComputeDGRHS(gpu, false, 0.0);
+            gpuSyncUcoeff(gpu);
             double Jp = adjointComputeForceCoeff(adj, gpu, chordRef, forceNx, forceNy);
 
             U_pert[var * totalDOF + dof] -= 2.0 * fd_eps;
             gpuCopySolutionToDevice(gpu, U_pert.data());
             gpuComputeDGRHS(gpu, false, 0.0);
+            gpuSyncUcoeff(gpu);
             double Jm = adjointComputeForceCoeff(adj, gpu, chordRef, forceNx, forceNy);
 
             double fd_grad = (Jp - Jm) / (2.0 * fd_eps);
@@ -878,6 +1392,7 @@ int main(int argc, char* argv[])
 
         gpuCopySolutionToDevice(gpu, U_flat.data());
         gpuComputeDGRHS(gpu, false, 0.0);
+        gpuSyncUcoeff(gpu);
     }
 
     // ========================================================================

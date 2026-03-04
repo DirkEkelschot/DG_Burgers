@@ -2,12 +2,33 @@
 #define EULER2D_GPU_H
 
 #include <vector>
+#include <map>
 
 #define NVAR_GPU 4
+
+// Per-P-group coefficient arrays and basis data (used with variable-P)
+struct PGroupGPU {
+    int P, P1, nmodes;
+    int nEGroup;
+    int*    d_elemIdx;   // [nEGroup] maps local -> global element index
+    double* d_Ucoeff;    // [NVAR * nEGroup * nmodes]
+    double* d_rhsCoeff;  // [NVAR * nEGroup * nmodes]
+    double* d_Minv;      // [nEGroup * nmodes * nmodes]
+    double* d_Qcoeff;    // [NVAR * 2 * nEGroup * nmodes]
+    // Host-side basis data (uploaded to constant memory before each group launch)
+    std::vector<double> h_Bmat, h_Dmat, h_blr, h_wq, h_faceInterp, h_NodalToModal;
+};
 
 struct GPUSolverData {
     int nE, nF, P, nq1d, nqVol, nqFace, nmodes, totalDOF;
     int P1; // P + 1
+
+    // Modal coefficient-space mode: when true, d_U/d_Utmp/d_k*/d_R/d_Uprev
+    // store expansion coefficients (size NVAR * totalCoeff) and d_U_quad
+    // holds quadrature-point values as a working buffer.
+    bool modalMode;
+    int totalCoeff;  // nE * nmodes
+    int primaryDOF;  // totalCoeff (modal) or totalDOF (nodal)
 
     // Geometry volume [nE * nqVol]
     double* d_detJ;
@@ -42,7 +63,7 @@ struct GPUSolverData {
     int* d_face_faceR;  // [nF]
     int* d_face_bcType; // [nF]: 0=interior, 1=slipwall, 2=farfield
 
-    // Solution arrays [NVAR * totalDOF]
+    // Solution arrays [NVAR * primaryDOF]
     double* d_U;
     double* d_R;
     double* d_k1;
@@ -54,6 +75,7 @@ struct GPUSolverData {
     // Working arrays
     double* d_Ucoeff;   // [NVAR * nE * nmodes]
     double* d_rhsCoeff; // [NVAR * nE * nmodes]
+    double* d_U_quad;   // [NVAR * totalDOF] quad-point values (modal mode only)
 
     // CFL reduction scratch
     double* d_dtMin;    // [1]
@@ -70,7 +92,7 @@ struct GPUSolverData {
     // Flux type: 0 = Lax-Friedrichs, 1 = HLLC
     int fluxType;
 
-    // Previous solution snapshot for NaN recovery [NVAR * totalDOF]
+    // Previous solution snapshot for NaN recovery [NVAR * primaryDOF]
     double* d_Uprev;
 
     // Artificial viscosity (Persson-Peraire + LDG)
@@ -81,7 +103,8 @@ struct GPUSolverData {
     double AVs0, AVkappa, AVscale;
 };
 
-void gpuAllocate(GPUSolverData& gpu, int nE, int nF, int P, int nq1d);
+void gpuAllocate(GPUSolverData& gpu, int nE, int nF, int P, int nq1d,
+                 bool modalMode = false);
 void gpuFree(GPUSolverData& gpu);
 
 void gpuCopyStaticData(
@@ -106,11 +129,25 @@ double gpuComputeCFL(GPUSolverData& gpu, double CFL, int P);
 bool gpuCheckNaN(GPUSolverData& gpu);
 void gpuSetNodalToModal(const double* T, int P1);
 void gpuSetFaceInterp(const double* interpL, const double* interpR, int nq1d);
+void gpuBackwardTransform(GPUSolverData& gpu, const double* d_coeffs,
+                          double* d_quad);
+void gpuCopyQuadPointsToHost(GPUSolverData& gpu, double* U_flat);
+void gpuCopyPrevQuadPointsToHost(GPUSolverData& gpu, double* U_flat);
 void gpuCopyEpsilonToHost(GPUSolverData& gpu, double* eps_host);
 void gpuCopySensorToHost(GPUSolverData& gpu, double* sensor_host);
 void gpuSnapshotSolution(GPUSolverData& gpu);
 void gpuCopyPrevSolutionToHost(GPUSolverData& gpu, double* U_flat);
 void gpuRestoreSnapshot(GPUSolverData& gpu);
 void gpuResidualNormPerVarFused(GPUSolverData& gpu, double norms[4]);
+void gpuSyncUcoeff(GPUSolverData& gpu);
+
+// Variable-P support
+void gpuAllocateGroup(PGroupGPU& grp, int P, int nEGroup);
+void gpuFreeGroup(PGroupGPU& grp);
+void gpuUploadGroupElemIdx(PGroupGPU& grp, const int* elemIdx);
+void gpuUploadGroupMinv(PGroupGPU& grp, const double* Minv);
+void gpuUploadGroupBasis(const PGroupGPU& grp);
+void gpuComputeDGRHS_group(GPUSolverData& gpu, PGroupGPU& grp,
+                           bool useUtmp, double time);
 
 #endif

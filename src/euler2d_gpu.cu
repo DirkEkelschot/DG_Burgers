@@ -356,15 +356,17 @@ __global__ void shockSensorKernel(
     double* __restrict__ d_epsilon,
     double* __restrict__ d_sensor,
     int nE, int P1, int nmodes, int nqVol,
-    double s0, double kappa, double smaxRef, double avScale)
+    double s0, double kappa, double smaxRef, double avScale,
+    const int* __restrict__ d_elemIdx)
 {
-    int e = blockIdx.x * blockDim.x + threadIdx.x;
-    if (e >= nE) return;
+    int eL = blockIdx.x * blockDim.x + threadIdx.x;
+    if (eL >= nE) return;
+    int eG = (d_elemIdx != nullptr) ? d_elemIdx[eL] : eL;
 
     int P = P1 - 1;
 
     double hMax = 0.0;
-    int base = e * nqVol;
+    int base = eG * nqVol;
     for (int q = 0; q < nqVol; ++q) {
         int i = base + q;
         double gXi  = sqrt(d_dxidx[i]*d_dxidx[i] + d_dxidy[i]*d_dxidy[i]);
@@ -383,7 +385,7 @@ __global__ void shockSensorKernel(
                 double Tki = c_NodalToModal[k * P1 + i];
                 for (int j = 0; j < P1; ++j)
                     val += Tki * c_NodalToModal[l * P1 + j]
-                         * d_Ucoeff[0 * nE * nmodes + e * nmodes + i * P1 + j];
+                         * d_Ucoeff[0 * nE * nmodes + eL * nmodes + i * P1 + j];
             }
             c_modal[k * P1 + l] = val;
         }
@@ -413,8 +415,8 @@ __global__ void shockSensorKernel(
     else
         eps = 0.5 * epsilon0 * (1.0 + sin(M_PI * (se - s0) / (2.0 * kappa)));
 
-    d_epsilon[e] = eps;
-    d_sensor[e]  = se;
+    d_epsilon[eG] = eps;
+    d_sensor[eG]  = se;
 }
 
 // ============================================================================
@@ -430,12 +432,14 @@ __global__ void avVolumeKernel(
     const double* __restrict__ d_detadx,
     const double* __restrict__ d_detady,
     const double* __restrict__ d_epsilon,
-    int nE, int P1, int nq1d, int nmodes, int nqVol)
+    int nE, int P1, int nq1d, int nmodes, int nqVol,
+    const int* __restrict__ d_elemIdx)
 {
-    int e = blockIdx.x;
-    if (e >= nE) return;
+    int eL = blockIdx.x;
+    if (eL >= nE) return;
+    int eG = (d_elemIdx != nullptr) ? d_elemIdx[eL] : eL;
 
-    double eps = d_epsilon[e];
+    double eps = d_epsilon[eG];
     if (eps <= 0.0) return;
 
     int tid = threadIdx.x;
@@ -449,7 +453,7 @@ __global__ void avVolumeKernel(
     for (int i = tid; i < NVAR_GPU * nmodes; i += blockDim.x) {
         int v = i / nmodes;
         int m = i % nmodes;
-        sUcoeff[i] = d_Ucoeff[v * nE * nmodes + e * nmodes + m];
+        sUcoeff[i] = d_Ucoeff[v * nE * nmodes + eL * nmodes + m];
     }
     __syncthreads();
 
@@ -486,7 +490,7 @@ __global__ void avVolumeKernel(
             double Di = c_Dmat[mi * nq1d + qx];
             for (int qe = 0; qe < nq1d; ++qe) {
                 int qLocal = qx * nq1d + qe;
-                int gIdx   = e * nqVol + qLocal;
+                int gIdx   = eG * nqVol + qLocal;
                 double wq  = c_wq[qx] * c_wq[qe] * d_detJ[gIdx];
 
                 double Bj = c_Bmat[mj * nq1d + qe];
@@ -506,7 +510,7 @@ __global__ void avVolumeKernel(
             }
         }
 
-        d_rhsCoeff[v * nE * nmodes + e * nmodes + m] += result;
+        d_rhsCoeff[v * nE * nmodes + eL * nmodes + m] += result;
     }
 }
 
@@ -521,10 +525,12 @@ __global__ void forwardTransformKernel(
     double* __restrict__ d_Ucoeff,
     const double* __restrict__ d_detJ,
     const double* __restrict__ d_Minv,
-    int nE, int P1, int nq1d, int nmodes, int nqVol, int totalDOF)
+    int nE, int P1, int nq1d, int nmodes, int nqVol, int totalDOF,
+    const int* __restrict__ d_elemIdx)
 {
-    int e = blockIdx.x;
-    if (e >= nE) return;
+    int eL = blockIdx.x;
+    if (eL >= nE) return;
+    int eG = (d_elemIdx != nullptr) ? d_elemIdx[eL] : eL;
 
     int tid = threadIdx.x;
     int nwork = NVAR_GPU * nmodes;
@@ -542,7 +548,7 @@ __global__ void forwardTransformKernel(
         for (int qx = 0; qx < nq1d; ++qx) {
             double Bi = c_Bmat[mi * nq1d + qx];
             for (int qe = 0; qe < nq1d; ++qe) {
-                int qIdx = e * nqVol + qx * nq1d + qe;
+                int qIdx = eG * nqVol + qx * nq1d + qe;
                 double weight = c_wq[qx] * c_wq[qe] * d_detJ[qIdx];
                 val += weight * Bi * c_Bmat[mj * nq1d + qe]
                      * d_U[v * totalDOF + qIdx];
@@ -559,10 +565,10 @@ __global__ void forwardTransformKernel(
 
         double val = 0.0;
         for (int mp = 0; mp < nmodes; ++mp)
-            val += d_Minv[e * nmodes * nmodes + m * nmodes + mp]
+            val += d_Minv[eL * nmodes * nmodes + m * nmodes + mp]
                  * proj[v * nmodes + mp];
 
-        d_Ucoeff[v * nE * nmodes + e * nmodes + m] = val;
+        d_Ucoeff[v * nE * nmodes + eL * nmodes + m] = val;
     }
 }
 
@@ -598,10 +604,12 @@ __global__ void volumeSurfaceKernel(
     int nE, int P1, int nq1d, int nmodes, int nqVol, int totalDOF, int nqFace,
     double rhoInf, double uInf, double vInf, double pInf,
     int fluxType,
-    const double* __restrict__ d_epsilon)
+    const double* __restrict__ d_epsilon,
+    const int* __restrict__ d_elemIdx)
 {
-    int e = blockIdx.x;
-    if (e >= nE) return;
+    int eL = blockIdx.x;
+    if (eL >= nE) return;
+    int e = (d_elemIdx != nullptr) ? d_elemIdx[eL] : eL;
 
     int tid = threadIdx.x;
     int nwork    = NVAR_GPU * nmodes;
@@ -760,7 +768,7 @@ __global__ void volumeSurfaceKernel(
             double phi = evalPhiFace(lf, mi_id, mj_id, q, P1, nq1d);
             surfResult += sFnumW[fq * 4 + v_id] * phi;
         }
-        d_rhsCoeff[v_id * nE * nmodes + e * nmodes + m_id] = volResult + surfResult;
+        d_rhsCoeff[v_id * nE * nmodes + eL * nmodes + m_id] = volResult + surfResult;
     }
 }
 
@@ -774,10 +782,12 @@ __global__ void massSolveBackwardKernel(
     const double* __restrict__ d_rhsCoeff,
     double* __restrict__ d_R,
     const double* __restrict__ d_Minv,
-    int nE, int P1, int nq1d, int nmodes, int nqVol, int totalDOF)
+    int nE, int P1, int nq1d, int nmodes, int nqVol, int totalDOF,
+    const int* __restrict__ d_elemIdx)
 {
-    int e = blockIdx.x;
-    if (e >= nE) return;
+    int eL = blockIdx.x;
+    if (eL >= nE) return;
+    int eG = (d_elemIdx != nullptr) ? d_elemIdx[eL] : eL;
 
     int tid = threadIdx.x;
     int nwork_modes = NVAR_GPU * nmodes;
@@ -791,8 +801,8 @@ __global__ void massSolveBackwardKernel(
 
         double val = 0.0;
         for (int mp = 0; mp < nmodes; ++mp)
-            val += d_Minv[e * nmodes * nmodes + m * nmodes + mp]
-                 * d_rhsCoeff[v * nE * nmodes + e * nmodes + mp];
+            val += d_Minv[eL * nmodes * nmodes + m * nmodes + mp]
+                 * d_rhsCoeff[v * nE * nmodes + eL * nmodes + mp];
 
         dUdt[w] = val;
     }
@@ -813,7 +823,71 @@ __global__ void massSolveBackwardKernel(
                 val += dUdt[v * nmodes + i * P1 + j] * Bi * c_Bmat[j * nq1d + qe];
         }
 
-        d_R[v * totalDOF + e * nqVol + q] = val;
+        d_R[v * totalDOF + eG * nqVol + q] = val;
+    }
+}
+
+// ============================================================================
+// Kernel 3b: Backward transform (modal mode) -- coefficients to quad points
+//   No mass-matrix inverse needed; just polynomial evaluation.
+// ============================================================================
+
+__global__ void backwardTransformKernel(
+    const double* __restrict__ d_coeffs,
+    double* __restrict__ d_quad,
+    int nE, int P1, int nq1d, int nmodes, int nqVol, int totalDOF)
+{
+    int e = blockIdx.x;
+    if (e >= nE) return;
+
+    int tid = threadIdx.x;
+    int nwork = NVAR_GPU * nqVol;
+
+    for (int w = tid; w < nwork; w += blockDim.x) {
+        int v  = w / nqVol;
+        int q  = w % nqVol;
+        int qx = q / nq1d;
+        int qe = q % nq1d;
+
+        double val = 0.0;
+        for (int i = 0; i < P1; ++i) {
+            double Bi = c_Bmat[i * nq1d + qx];
+            for (int j = 0; j < P1; ++j)
+                val += d_coeffs[v * nE * nmodes + e * nmodes + i * P1 + j]
+                     * Bi * c_Bmat[j * nq1d + qe];
+        }
+
+        d_quad[v * totalDOF + e * nqVol + q] = val;
+    }
+}
+
+// ============================================================================
+// Kernel 3c: Mass solve only (modal mode) -- stays in coefficient space
+//   dUdt_coeff = Minv * rhsCoeff  (no backward evaluation)
+// ============================================================================
+
+__global__ void massSolveModalKernel(
+    const double* __restrict__ d_rhsCoeff,
+    double* __restrict__ d_R,
+    const double* __restrict__ d_Minv,
+    int nE, int nmodes)
+{
+    int e = blockIdx.x;
+    if (e >= nE) return;
+
+    int tid = threadIdx.x;
+    int nwork = NVAR_GPU * nmodes;
+
+    for (int w = tid; w < nwork; w += blockDim.x) {
+        int v = w / nmodes;
+        int m = w % nmodes;
+
+        double val = 0.0;
+        for (int mp = 0; mp < nmodes; ++mp)
+            val += d_Minv[e * nmodes * nmodes + m * nmodes + mp]
+                 * d_rhsCoeff[v * nE * nmodes + e * nmodes + mp];
+
+        d_R[v * nE * nmodes + e * nmodes + m] = val;
     }
 }
 
@@ -1009,7 +1083,8 @@ __global__ void residualNormPerVarKernel(
 // Host wrapper: allocate GPU memory
 // ============================================================================
 
-void gpuAllocate(GPUSolverData& gpu, int nE, int nF, int P, int nq1d)
+void gpuAllocate(GPUSolverData& gpu, int nE, int nF, int P, int nq1d,
+                 bool modalMode)
 {
     gpu.nE = nE;
     gpu.nF = nF;
@@ -1020,10 +1095,14 @@ void gpuAllocate(GPUSolverData& gpu, int nE, int nF, int P, int nq1d)
     gpu.nqFace = nq1d;
     gpu.nmodes = (P+1) * (P+1);
     gpu.totalDOF = nE * gpu.nqVol;
+    gpu.totalCoeff = nE * gpu.nmodes;
+    gpu.modalMode = modalMode;
+    gpu.primaryDOF = modalMode ? gpu.totalCoeff : gpu.totalDOF;
 
     int nqVol = gpu.nqVol;
     int nmodes = gpu.nmodes;
     int totalDOF = gpu.totalDOF;
+    int primaryDOF = gpu.primaryDOF;
 
     CUDA_CHECK(cudaMalloc(&gpu.d_detJ,   nE * nqVol * sizeof(double)));
     CUDA_CHECK(cudaMalloc(&gpu.d_dxidx,  nE * nqVol * sizeof(double)));
@@ -1051,7 +1130,7 @@ void gpuAllocate(GPUSolverData& gpu, int nE, int nF, int P, int nq1d)
     CUDA_CHECK(cudaMalloc(&gpu.d_face_faceR,  nF * sizeof(int)));
     CUDA_CHECK(cudaMalloc(&gpu.d_face_bcType, nF * sizeof(int)));
 
-    int solSize = NVAR_GPU * totalDOF;
+    int solSize = NVAR_GPU * primaryDOF;
     CUDA_CHECK(cudaMalloc(&gpu.d_U,    solSize * sizeof(double)));
     CUDA_CHECK(cudaMalloc(&gpu.d_R,    solSize * sizeof(double)));
     CUDA_CHECK(cudaMalloc(&gpu.d_k1,   solSize * sizeof(double)));
@@ -1063,6 +1142,12 @@ void gpuAllocate(GPUSolverData& gpu, int nE, int nF, int P, int nq1d)
     int coeffSize = NVAR_GPU * nE * nmodes;
     CUDA_CHECK(cudaMalloc(&gpu.d_Ucoeff,   coeffSize * sizeof(double)));
     CUDA_CHECK(cudaMalloc(&gpu.d_rhsCoeff, coeffSize * sizeof(double)));
+
+    gpu.d_U_quad = nullptr;
+    if (modalMode) {
+        int quadSize = NVAR_GPU * totalDOF;
+        CUDA_CHECK(cudaMalloc(&gpu.d_U_quad, quadSize * sizeof(double)));
+    }
 
     CUDA_CHECK(cudaMalloc(&gpu.d_dtMin,   sizeof(double)));
     CUDA_CHECK(cudaMalloc(&gpu.d_nanFlag, sizeof(int)));
@@ -1096,6 +1181,7 @@ void gpuFree(GPUSolverData& gpu)
     cudaFree(gpu.d_k3);    cudaFree(gpu.d_k4);
     cudaFree(gpu.d_Utmp);
     cudaFree(gpu.d_Ucoeff);  cudaFree(gpu.d_rhsCoeff);
+    if (gpu.d_U_quad) cudaFree(gpu.d_U_quad);
     cudaFree(gpu.d_dtMin);
     cudaFree(gpu.d_nanFlag); cudaFree(gpu.d_normBuf);
     cudaFree(gpu.d_epsilon); cudaFree(gpu.d_sensor);
@@ -1184,13 +1270,36 @@ void gpuSetNodalToModal(const double* T, int P1)
 void gpuCopySolutionToDevice(GPUSolverData& gpu, const double* U_flat)
 {
     CUDA_CHECK(cudaMemcpy(gpu.d_U, U_flat,
-               NVAR_GPU * gpu.totalDOF * sizeof(double), cudaMemcpyHostToDevice));
+               NVAR_GPU * gpu.primaryDOF * sizeof(double), cudaMemcpyHostToDevice));
 }
 
 void gpuCopySolutionToHost(GPUSolverData& gpu, double* U_flat)
 {
     CUDA_CHECK(cudaMemcpy(U_flat, gpu.d_U,
-               NVAR_GPU * gpu.totalDOF * sizeof(double), cudaMemcpyDeviceToHost));
+               NVAR_GPU * gpu.primaryDOF * sizeof(double), cudaMemcpyDeviceToHost));
+}
+
+void gpuBackwardTransform(GPUSolverData& gpu, const double* d_coeffs,
+                          double* d_quad)
+{
+    int blockBT = max(64, NVAR_GPU * gpu.nqVol);
+    if (blockBT % 32 != 0) blockBT = ((blockBT + 31) / 32) * 32;
+    backwardTransformKernel<<<gpu.nE, blockBT>>>(
+        d_coeffs, d_quad,
+        gpu.nE, gpu.P1, gpu.nq1d, gpu.nmodes,
+        gpu.nqVol, gpu.totalDOF);
+}
+
+void gpuCopyQuadPointsToHost(GPUSolverData& gpu, double* U_flat)
+{
+    if (gpu.modalMode) {
+        gpuBackwardTransform(gpu, gpu.d_U, gpu.d_U_quad);
+        CUDA_CHECK(cudaMemcpy(U_flat, gpu.d_U_quad,
+                   NVAR_GPU * gpu.totalDOF * sizeof(double), cudaMemcpyDeviceToHost));
+    } else {
+        CUDA_CHECK(cudaMemcpy(U_flat, gpu.d_U,
+                   NVAR_GPU * gpu.totalDOF * sizeof(double), cudaMemcpyDeviceToHost));
+    }
 }
 
 // ============================================================================
@@ -1199,72 +1308,136 @@ void gpuCopySolutionToHost(GPUSolverData& gpu, double* U_flat)
 
 void gpuComputeDGRHS(GPUSolverData& gpu, bool useUtmp, double time)
 {
-    const double* d_Uin = useUtmp ? gpu.d_Utmp : gpu.d_U;
     int nE = gpu.nE, P1 = gpu.P1, nq1d = gpu.nq1d;
     int nmodes = gpu.nmodes, nqVol = gpu.nqVol, totalDOF = gpu.totalDOF;
     int nqFace = gpu.nqFace;
 
-    // --- Kernel 1: Forward transform ---
-    int blockDim1 = max(64, NVAR_GPU * nmodes);
-    if (blockDim1 % 32 != 0) blockDim1 = ((blockDim1 + 31) / 32) * 32;
-    int smem1 = NVAR_GPU * nmodes * sizeof(double);
-    forwardTransformKernel<<<nE, blockDim1, smem1>>>(
-        d_Uin, gpu.d_Ucoeff, gpu.d_detJ, gpu.d_Minv,
-        nE, P1, nq1d, nmodes, nqVol, totalDOF);
+    if (gpu.modalMode) {
+        // ===== MODAL (coefficient-space) path =====
+        const double* d_coeffIn = useUtmp ? gpu.d_Utmp : gpu.d_U;
 
-    // --- Kernel 1.5: Shock sensor ---
-    if (gpu.useAV) {
-        int blockS = 256;
-        int gridS  = (nE + blockS - 1) / blockS;
-        double uMag = sqrt(gpu.uInf*gpu.uInf + gpu.vInf*gpu.vInf);
-        double cInf = sqrt(GAMMA_GPU * gpu.pInf / gpu.rhoInf);
-        double smaxRef = uMag + cInf;
-        shockSensorKernel<<<gridS, blockS>>>(
-            gpu.d_Ucoeff,
-            gpu.d_dxidx, gpu.d_dxidy, gpu.d_detadx, gpu.d_detady,
-            gpu.d_epsilon, gpu.d_sensor,
-            nE, P1, nmodes, nqVol,
-            gpu.AVs0, gpu.AVkappa, smaxRef, gpu.AVscale);
-    }
+        // --- Backward transform: coefficients -> quad-point values ---
+        int blockBT = max(64, NVAR_GPU * nqVol);
+        if (blockBT % 32 != 0) blockBT = ((blockBT + 31) / 32) * 32;
+        backwardTransformKernel<<<nE, blockBT>>>(
+            d_coeffIn, gpu.d_U_quad,
+            nE, P1, nq1d, nmodes, nqVol, totalDOF);
 
-    // --- Kernel 2: Volume + surface integral (1 block per element) ---
-    int nwork    = NVAR_GPU * nmodes;
-    int nFaceQP  = 4 * nqFace;
-    int blockDim2 = ((nwork + nFaceQP + 31) / 32) * 32;
-    int smem2 = (9 * nqVol + nFaceQP * 4) * sizeof(double);
-    const double* d_eps_ptr = gpu.useAV ? gpu.d_epsilon : nullptr;
-    volumeSurfaceKernel<<<nE, blockDim2, smem2>>>(
-        d_Uin, gpu.d_Ucoeff, gpu.d_rhsCoeff,
-        gpu.d_detJ, gpu.d_dxidx, gpu.d_dxidy, gpu.d_detadx, gpu.d_detady,
-        gpu.d_faceNx, gpu.d_faceNy, gpu.d_faceJac,
-        gpu.d_elem2face, gpu.d_face_elemL, gpu.d_face_elemR,
-        gpu.d_face_faceL, gpu.d_face_faceR, gpu.d_face_bcType,
-        nE, P1, nq1d, nmodes, nqVol, totalDOF, nqFace,
-        gpu.rhoInf, gpu.uInf, gpu.vInf, gpu.pInf,
-        gpu.fluxType,
-        d_eps_ptr);
 
-    // --- Kernel 2.5: AV volume diffusion ---
-    if (gpu.useAV) {
-        int blockAV = max(64, NVAR_GPU * nmodes);
-        if (blockAV % 32 != 0) blockAV = ((blockAV + 31) / 32) * 32;
-        blockAV = max(blockAV, NVAR_GPU * nqVol);
-        if (blockAV % 32 != 0) blockAV = ((blockAV + 31) / 32) * 32;
-        int smemAV = (NVAR_GPU * nmodes + 2 * NVAR_GPU * nqVol) * sizeof(double);
-        avVolumeKernel<<<nE, blockAV, smemAV>>>(
-            gpu.d_Ucoeff, gpu.d_rhsCoeff,
+        // --- Shock sensor (reads coefficients directly) ---
+        if (gpu.useAV) {
+            int blockS = 256;
+            int gridS  = (nE + blockS - 1) / blockS;
+            double uMag = sqrt(gpu.uInf*gpu.uInf + gpu.vInf*gpu.vInf);
+            double cInf = sqrt(GAMMA_GPU * gpu.pInf / gpu.rhoInf);
+            double smaxRef = uMag + cInf;
+            shockSensorKernel<<<gridS, blockS>>>(
+                d_coeffIn,
+                gpu.d_dxidx, gpu.d_dxidy, gpu.d_detadx, gpu.d_detady,
+                gpu.d_epsilon, gpu.d_sensor,
+                nE, P1, nmodes, nqVol,
+                gpu.AVs0, gpu.AVkappa, smaxRef, gpu.AVscale, nullptr);
+        }
+
+        // --- Volume + surface integral (reads d_U_quad for fluxes) ---
+        int nwork    = NVAR_GPU * nmodes;
+        int nFaceQP  = 4 * nqFace;
+        int blockDim2 = ((nwork + nFaceQP + 31) / 32) * 32;
+        int smem2 = (9 * nqVol + nFaceQP * 4) * sizeof(double);
+        const double* d_eps_ptr = gpu.useAV ? gpu.d_epsilon : nullptr;
+        volumeSurfaceKernel<<<nE, blockDim2, smem2>>>(
+            gpu.d_U_quad, d_coeffIn, gpu.d_rhsCoeff,
             gpu.d_detJ, gpu.d_dxidx, gpu.d_dxidy, gpu.d_detadx, gpu.d_detady,
-            gpu.d_epsilon,
-            nE, P1, nq1d, nmodes, nqVol);
-    }
+            gpu.d_faceNx, gpu.d_faceNy, gpu.d_faceJac,
+            gpu.d_elem2face, gpu.d_face_elemL, gpu.d_face_elemR,
+            gpu.d_face_faceL, gpu.d_face_faceR, gpu.d_face_bcType,
+            nE, P1, nq1d, nmodes, nqVol, totalDOF, nqFace,
+            gpu.rhoInf, gpu.uInf, gpu.vInf, gpu.pInf,
+            gpu.fluxType,
+            d_eps_ptr, nullptr);
 
-    // --- Kernel 3: Mass solve + backward transform ---
-    int blockDim3 = max(64, NVAR_GPU * nmodes);
-    if (blockDim3 % 32 != 0) blockDim3 = ((blockDim3 + 31) / 32) * 32;
-    int smem3 = NVAR_GPU * nmodes * sizeof(double);
-    massSolveBackwardKernel<<<nE, blockDim3, smem3>>>(
-        gpu.d_rhsCoeff, gpu.d_R, gpu.d_Minv,
-        nE, P1, nq1d, nmodes, nqVol, totalDOF);
+        // --- AV volume diffusion (reads coefficients) ---
+        if (gpu.useAV) {
+            int blockAV = max(64, NVAR_GPU * nmodes);
+            if (blockAV % 32 != 0) blockAV = ((blockAV + 31) / 32) * 32;
+            blockAV = max(blockAV, NVAR_GPU * nqVol);
+            if (blockAV % 32 != 0) blockAV = ((blockAV + 31) / 32) * 32;
+            int smemAV = (NVAR_GPU * nmodes + 2 * NVAR_GPU * nqVol) * sizeof(double);
+            avVolumeKernel<<<nE, blockAV, smemAV>>>(
+                d_coeffIn, gpu.d_rhsCoeff,
+                gpu.d_detJ, gpu.d_dxidx, gpu.d_dxidy, gpu.d_detadx, gpu.d_detady,
+                gpu.d_epsilon,
+                nE, P1, nq1d, nmodes, nqVol, nullptr);
+        }
+
+        // --- Mass solve only (output stays in coefficient space) ---
+        int blockDim3 = max(64, NVAR_GPU * nmodes);
+        if (blockDim3 % 32 != 0) blockDim3 = ((blockDim3 + 31) / 32) * 32;
+        massSolveModalKernel<<<nE, blockDim3>>>(
+            gpu.d_rhsCoeff, gpu.d_R, gpu.d_Minv,
+            nE, nmodes);
+
+    } else {
+        // ===== NODAL (quadrature-point) path =====
+        const double* d_Uin = useUtmp ? gpu.d_Utmp : gpu.d_U;
+
+        int blockDim1 = max(64, NVAR_GPU * nmodes);
+        if (blockDim1 % 32 != 0) blockDim1 = ((blockDim1 + 31) / 32) * 32;
+        int smem1 = NVAR_GPU * nmodes * sizeof(double);
+        forwardTransformKernel<<<nE, blockDim1, smem1>>>(
+            d_Uin, gpu.d_Ucoeff, gpu.d_detJ, gpu.d_Minv,
+            nE, P1, nq1d, nmodes, nqVol, totalDOF, nullptr);
+
+        if (gpu.useAV) {
+            int blockS = 256;
+            int gridS  = (nE + blockS - 1) / blockS;
+            double uMag = sqrt(gpu.uInf*gpu.uInf + gpu.vInf*gpu.vInf);
+            double cInf = sqrt(GAMMA_GPU * gpu.pInf / gpu.rhoInf);
+            double smaxRef = uMag + cInf;
+            shockSensorKernel<<<gridS, blockS>>>(
+                gpu.d_Ucoeff,
+                gpu.d_dxidx, gpu.d_dxidy, gpu.d_detadx, gpu.d_detady,
+                gpu.d_epsilon, gpu.d_sensor,
+                nE, P1, nmodes, nqVol,
+                gpu.AVs0, gpu.AVkappa, smaxRef, gpu.AVscale, nullptr);
+        }
+
+        int nwork    = NVAR_GPU * nmodes;
+        int nFaceQP  = 4 * nqFace;
+        int blockDim2 = ((nwork + nFaceQP + 31) / 32) * 32;
+        int smem2 = (9 * nqVol + nFaceQP * 4) * sizeof(double);
+        const double* d_eps_ptr = gpu.useAV ? gpu.d_epsilon : nullptr;
+        volumeSurfaceKernel<<<nE, blockDim2, smem2>>>(
+            d_Uin, gpu.d_Ucoeff, gpu.d_rhsCoeff,
+            gpu.d_detJ, gpu.d_dxidx, gpu.d_dxidy, gpu.d_detadx, gpu.d_detady,
+            gpu.d_faceNx, gpu.d_faceNy, gpu.d_faceJac,
+            gpu.d_elem2face, gpu.d_face_elemL, gpu.d_face_elemR,
+            gpu.d_face_faceL, gpu.d_face_faceR, gpu.d_face_bcType,
+            nE, P1, nq1d, nmodes, nqVol, totalDOF, nqFace,
+            gpu.rhoInf, gpu.uInf, gpu.vInf, gpu.pInf,
+            gpu.fluxType,
+            d_eps_ptr, nullptr);
+
+        if (gpu.useAV) {
+            int blockAV = max(64, NVAR_GPU * nmodes);
+            if (blockAV % 32 != 0) blockAV = ((blockAV + 31) / 32) * 32;
+            blockAV = max(blockAV, NVAR_GPU * nqVol);
+            if (blockAV % 32 != 0) blockAV = ((blockAV + 31) / 32) * 32;
+            int smemAV = (NVAR_GPU * nmodes + 2 * NVAR_GPU * nqVol) * sizeof(double);
+            avVolumeKernel<<<nE, blockAV, smemAV>>>(
+                gpu.d_Ucoeff, gpu.d_rhsCoeff,
+                gpu.d_detJ, gpu.d_dxidx, gpu.d_dxidy, gpu.d_detadx, gpu.d_detady,
+                gpu.d_epsilon,
+                nE, P1, nq1d, nmodes, nqVol, nullptr);
+        }
+
+        int blockDim3 = max(64, NVAR_GPU * nmodes);
+        if (blockDim3 % 32 != 0) blockDim3 = ((blockDim3 + 31) / 32) * 32;
+        int smem3 = NVAR_GPU * nmodes * sizeof(double);
+        massSolveBackwardKernel<<<nE, blockDim3, smem3>>>(
+            gpu.d_rhsCoeff, gpu.d_R, gpu.d_Minv,
+            nE, P1, nq1d, nmodes, nqVol, totalDOF, nullptr);
+    }
 }
 
 // ============================================================================
@@ -1273,7 +1446,7 @@ void gpuComputeDGRHS(GPUSolverData& gpu, bool useUtmp, double time)
 
 void gpuRK4Stage(GPUSolverData& gpu, double dt, int stage)
 {
-    int N = NVAR_GPU * gpu.totalDOF;
+    int N = NVAR_GPU * gpu.primaryDOF;
     int blockDim = 256;
     int gridDim = (N + blockDim - 1) / blockDim;
 
@@ -1290,12 +1463,14 @@ void gpuRK4Stage(GPUSolverData& gpu, double dt, int stage)
         gpu.d_k1, gpu.d_k2, gpu.d_k3,
         dt, stage, N);
 
-    // Enforce positivity on the updated solution
-    int bk = 256;
-    int gd = (gpu.totalDOF + bk - 1) / bk;
-    double rhoMin = 1e-6, pMin = 1e-6;
-    double* d_target = (stage < 4) ? gpu.d_Utmp : gpu.d_U;
-    positivityKernel<<<gd, bk>>>(d_target, gpu.totalDOF, rhoMin, pMin);
+    if (!gpu.modalMode) {
+        // Pointwise positivity enforcement (only for nodal/quad-point storage)
+        int bk = 256;
+        int gd = (gpu.totalDOF + bk - 1) / bk;
+        double rhoMin = 1e-6, pMin = 1e-6;
+        double* d_target = (stage < 4) ? gpu.d_Utmp : gpu.d_U;
+        positivityKernel<<<gd, bk>>>(d_target, gpu.totalDOF, rhoMin, pMin);
+    }
 }
 
 // ============================================================================
@@ -1307,12 +1482,27 @@ double gpuComputeCFL(GPUSolverData& gpu, double CFL, int P)
     double huge = 1e20;
     CUDA_CHECK(cudaMemcpy(gpu.d_dtMin, &huge, sizeof(double), cudaMemcpyHostToDevice));
 
+    // CFL kernel needs quadrature-point values
+    const double* d_Upts;
+    if (gpu.modalMode) {
+        // Backward transform d_U (coefficients) → d_U_quad
+        int blockBT = max(64, NVAR_GPU * gpu.nqVol);
+        if (blockBT % 32 != 0) blockBT = ((blockBT + 31) / 32) * 32;
+        backwardTransformKernel<<<gpu.nE, blockBT>>>(
+            gpu.d_U, gpu.d_U_quad,
+            gpu.nE, gpu.P1, gpu.nq1d, gpu.nmodes,
+            gpu.nqVol, gpu.totalDOF);
+        d_Upts = gpu.d_U_quad;
+    } else {
+        d_Upts = gpu.d_U;
+    }
+
     int totalPts = gpu.nE * gpu.nqVol;
     int blockDim = 256;
     int gridDim = min((totalPts + blockDim - 1) / blockDim, 1024);
     int smem = blockDim * sizeof(double);
     cflKernel<<<gridDim, blockDim, smem>>>(
-        gpu.d_U, gpu.d_dxidx, gpu.d_dxidy, gpu.d_detadx, gpu.d_detady,
+        d_Upts, gpu.d_dxidx, gpu.d_dxidy, gpu.d_detadx, gpu.d_detady,
         gpu.d_dtMin, gpu.nE, gpu.nqVol, gpu.totalDOF, CFL, P);
 
     double dtMin;
@@ -1329,7 +1519,7 @@ bool gpuCheckNaN(GPUSolverData& gpu)
     int zero = 0;
     CUDA_CHECK(cudaMemcpy(gpu.d_nanFlag, &zero, sizeof(int), cudaMemcpyHostToDevice));
 
-    int N = NVAR_GPU * gpu.totalDOF;
+    int N = NVAR_GPU * gpu.primaryDOF;
     int blockDim = 256;
     int gridDim = (N + blockDim - 1) / blockDim;
     nanCheckKernel<<<gridDim, blockDim>>>(gpu.d_U, N, gpu.d_nanFlag);
@@ -1354,19 +1544,31 @@ void gpuCopySensorToHost(GPUSolverData& gpu, double* sensor_host)
 void gpuSnapshotSolution(GPUSolverData& gpu)
 {
     CUDA_CHECK(cudaMemcpy(gpu.d_Uprev, gpu.d_U,
-               NVAR_GPU * gpu.totalDOF * sizeof(double), cudaMemcpyDeviceToDevice));
+               NVAR_GPU * gpu.primaryDOF * sizeof(double), cudaMemcpyDeviceToDevice));
 }
 
 void gpuCopyPrevSolutionToHost(GPUSolverData& gpu, double* U_flat)
 {
     CUDA_CHECK(cudaMemcpy(U_flat, gpu.d_Uprev,
-               NVAR_GPU * gpu.totalDOF * sizeof(double), cudaMemcpyDeviceToHost));
+               NVAR_GPU * gpu.primaryDOF * sizeof(double), cudaMemcpyDeviceToHost));
+}
+
+void gpuCopyPrevQuadPointsToHost(GPUSolverData& gpu, double* U_flat)
+{
+    if (gpu.modalMode) {
+        gpuBackwardTransform(gpu, gpu.d_Uprev, gpu.d_U_quad);
+        CUDA_CHECK(cudaMemcpy(U_flat, gpu.d_U_quad,
+                   NVAR_GPU * gpu.totalDOF * sizeof(double), cudaMemcpyDeviceToHost));
+    } else {
+        CUDA_CHECK(cudaMemcpy(U_flat, gpu.d_Uprev,
+                   NVAR_GPU * gpu.totalDOF * sizeof(double), cudaMemcpyDeviceToHost));
+    }
 }
 
 void gpuRestoreSnapshot(GPUSolverData& gpu)
 {
     CUDA_CHECK(cudaMemcpy(gpu.d_U, gpu.d_Uprev,
-               NVAR_GPU * gpu.totalDOF * sizeof(double), cudaMemcpyDeviceToDevice));
+               NVAR_GPU * gpu.primaryDOF * sizeof(double), cudaMemcpyDeviceToDevice));
 }
 
 // ============================================================================
@@ -1377,13 +1579,153 @@ void gpuResidualNormPerVarFused(GPUSolverData& gpu, double norms[4])
 {
     CUDA_CHECK(cudaMemset(gpu.d_normBuf, 0, 4 * sizeof(double)));
 
+    int dof = gpu.primaryDOF;
     int bk = 256;
-    int gd = min((gpu.totalDOF + bk - 1) / bk, 1024);
+    int gd = min((dof + bk - 1) / bk, 1024);
     residualNormPerVarKernel<<<gd, bk, 4 * bk * sizeof(double)>>>(
-        gpu.d_R, gpu.d_normBuf, gpu.totalDOF);
+        gpu.d_R, gpu.d_normBuf, dof);
 
     CUDA_CHECK(cudaMemcpy(norms, gpu.d_normBuf, 4 * sizeof(double), cudaMemcpyDeviceToHost));
     for (int v = 0; v < 4; ++v)
         norms[v] = sqrt(norms[v]);
+}
+
+void gpuSyncUcoeff(GPUSolverData& gpu)
+{
+    if (gpu.modalMode) {
+        int coeffSize = NVAR_GPU * gpu.nE * gpu.nmodes;
+        CUDA_CHECK(cudaMemcpy(gpu.d_Ucoeff, gpu.d_U,
+                   coeffSize * sizeof(double), cudaMemcpyDeviceToDevice));
+    }
+}
+
+// ============================================================================
+// Variable-P support: per-group allocation and RHS
+// ============================================================================
+
+void gpuAllocateGroup(PGroupGPU& grp, int P, int nEGroup)
+{
+    grp.P = P;
+    grp.P1 = P + 1;
+    grp.nmodes = (P + 1) * (P + 1);
+    grp.nEGroup = nEGroup;
+
+    int nmodes = grp.nmodes;
+    CUDA_CHECK(cudaMalloc(&grp.d_elemIdx,  nEGroup * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&grp.d_Ucoeff,   NVAR_GPU * nEGroup * nmodes * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&grp.d_rhsCoeff, NVAR_GPU * nEGroup * nmodes * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&grp.d_Minv,     nEGroup * nmodes * nmodes * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&grp.d_Qcoeff,   NVAR_GPU * 2 * nEGroup * nmodes * sizeof(double)));
+}
+
+void gpuFreeGroup(PGroupGPU& grp)
+{
+    cudaFree(grp.d_elemIdx);
+    cudaFree(grp.d_Ucoeff);
+    cudaFree(grp.d_rhsCoeff);
+    cudaFree(grp.d_Minv);
+    cudaFree(grp.d_Qcoeff);
+}
+
+void gpuUploadGroupElemIdx(PGroupGPU& grp, const int* elemIdx)
+{
+    CUDA_CHECK(cudaMemcpy(grp.d_elemIdx, elemIdx,
+               grp.nEGroup * sizeof(int), cudaMemcpyHostToDevice));
+}
+
+void gpuUploadGroupMinv(PGroupGPU& grp, const double* Minv)
+{
+    CUDA_CHECK(cudaMemcpy(grp.d_Minv, Minv,
+               grp.nEGroup * grp.nmodes * grp.nmodes * sizeof(double),
+               cudaMemcpyHostToDevice));
+}
+
+void gpuUploadGroupBasis(const PGroupGPU& grp)
+{
+    int P1 = grp.P1;
+    int nq1d = (int)grp.h_wq.size();
+    CUDA_CHECK(cudaMemcpyToSymbol(c_Bmat, grp.h_Bmat.data(),  P1 * nq1d * sizeof(double)));
+    CUDA_CHECK(cudaMemcpyToSymbol(c_Dmat, grp.h_Dmat.data(),  P1 * nq1d * sizeof(double)));
+    CUDA_CHECK(cudaMemcpyToSymbol(c_blr,  grp.h_blr.data(),   P1 * 2 * sizeof(double)));
+    CUDA_CHECK(cudaMemcpyToSymbol(c_wq,   grp.h_wq.data(),    nq1d * sizeof(double)));
+    if (!grp.h_faceInterp.empty())
+        CUDA_CHECK(cudaMemcpyToSymbol(c_faceInterp, grp.h_faceInterp.data(),
+                                      2 * nq1d * sizeof(double)));
+    if (!grp.h_NodalToModal.empty())
+        CUDA_CHECK(cudaMemcpyToSymbol(c_NodalToModal, grp.h_NodalToModal.data(),
+                                      P1 * P1 * sizeof(double)));
+}
+
+void gpuComputeDGRHS_group(GPUSolverData& gpu, PGroupGPU& grp,
+                           bool useUtmp, double time)
+{
+    const double* d_Uin = useUtmp ? gpu.d_Utmp : gpu.d_U;
+    int nEG = grp.nEGroup, P1 = grp.P1;
+    int nq1d = gpu.nq1d, nmodes = grp.nmodes;
+    int nqVol = gpu.nqVol, totalDOF = gpu.totalDOF;
+    int nqFace = gpu.nqFace;
+
+    gpuUploadGroupBasis(grp);
+
+    // Forward transform
+    int blockDim1 = max(64, NVAR_GPU * nmodes);
+    if (blockDim1 % 32 != 0) blockDim1 = ((blockDim1 + 31) / 32) * 32;
+    int smem1 = NVAR_GPU * nmodes * sizeof(double);
+    forwardTransformKernel<<<nEG, blockDim1, smem1>>>(
+        d_Uin, grp.d_Ucoeff, gpu.d_detJ, grp.d_Minv,
+        nEG, P1, nq1d, nmodes, nqVol, totalDOF, grp.d_elemIdx);
+
+    // Shock sensor
+    if (gpu.useAV) {
+        int blockS = 256;
+        int gridS  = (nEG + blockS - 1) / blockS;
+        double uMag = sqrt(gpu.uInf*gpu.uInf + gpu.vInf*gpu.vInf);
+        double cInf = sqrt(GAMMA_GPU * gpu.pInf / gpu.rhoInf);
+        double smaxRef = uMag + cInf;
+        shockSensorKernel<<<gridS, blockS>>>(
+            grp.d_Ucoeff,
+            gpu.d_dxidx, gpu.d_dxidy, gpu.d_detadx, gpu.d_detady,
+            gpu.d_epsilon, gpu.d_sensor,
+            nEG, P1, nmodes, nqVol,
+            gpu.AVs0, gpu.AVkappa, smaxRef, gpu.AVscale, grp.d_elemIdx);
+    }
+
+    // Volume + surface integral
+    int nwork   = NVAR_GPU * nmodes;
+    int nFaceQP = 4 * nqFace;
+    int blockDim2 = ((nwork + nFaceQP + 31) / 32) * 32;
+    int smem2 = (9 * nqVol + nFaceQP * 4) * sizeof(double);
+    const double* d_eps_ptr = gpu.useAV ? gpu.d_epsilon : nullptr;
+    volumeSurfaceKernel<<<nEG, blockDim2, smem2>>>(
+        d_Uin, grp.d_Ucoeff, grp.d_rhsCoeff,
+        gpu.d_detJ, gpu.d_dxidx, gpu.d_dxidy, gpu.d_detadx, gpu.d_detady,
+        gpu.d_faceNx, gpu.d_faceNy, gpu.d_faceJac,
+        gpu.d_elem2face, gpu.d_face_elemL, gpu.d_face_elemR,
+        gpu.d_face_faceL, gpu.d_face_faceR, gpu.d_face_bcType,
+        nEG, P1, nq1d, nmodes, nqVol, totalDOF, nqFace,
+        gpu.rhoInf, gpu.uInf, gpu.vInf, gpu.pInf,
+        gpu.fluxType, d_eps_ptr, grp.d_elemIdx);
+
+    // AV volume diffusion
+    if (gpu.useAV) {
+        int blockAV = max(64, NVAR_GPU * nmodes);
+        if (blockAV % 32 != 0) blockAV = ((blockAV + 31) / 32) * 32;
+        blockAV = max(blockAV, NVAR_GPU * nqVol);
+        if (blockAV % 32 != 0) blockAV = ((blockAV + 31) / 32) * 32;
+        int smemAV = (NVAR_GPU * nmodes + 2 * NVAR_GPU * nqVol) * sizeof(double);
+        avVolumeKernel<<<nEG, blockAV, smemAV>>>(
+            grp.d_Ucoeff, grp.d_rhsCoeff,
+            gpu.d_detJ, gpu.d_dxidx, gpu.d_dxidy, gpu.d_detadx, gpu.d_detady,
+            gpu.d_epsilon,
+            nEG, P1, nq1d, nmodes, nqVol, grp.d_elemIdx);
+    }
+
+    // Mass solve + backward transform
+    int blockDim3 = max(64, NVAR_GPU * nmodes);
+    if (blockDim3 % 32 != 0) blockDim3 = ((blockDim3 + 31) / 32) * 32;
+    int smem3 = NVAR_GPU * nmodes * sizeof(double);
+    massSolveBackwardKernel<<<nEG, blockDim3, smem3>>>(
+        grp.d_rhsCoeff, gpu.d_R, grp.d_Minv,
+        nEG, P1, nq1d, nmodes, nqVol, totalDOF, grp.d_elemIdx);
 }
 

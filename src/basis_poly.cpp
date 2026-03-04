@@ -243,83 +243,29 @@ void ModalBasis::ConstructBasis()
         polylib::zwgl(m_zn.data(), m_wn.data(), np);
         polylib::Dgl(D, Dt, m_z.data(), nq);
     }
+    // Legendre polynomial basis: phi_n(z) = P_n(z)
+    // Orthogonal on [-1,1], producing a well-conditioned mass matrix.
     for (int n = 0; n < numModes; ++n)
     {
-        
-        std::vector<double> phi1(nq,0.0);
+        std::vector<double> phi1(nq, 0.0);
+        polylib::jacobfd(nq, m_z.data(), phi1.data(), NULL, n, 0.0, 0.0);
+        for (int k = 0; k < nq; k++)
+            m_bdata[n * nq + k] = phi1[k];
 
-        if(n == 0)
-        {
-            for(int k=0;k<nq;k++)
-            {
-                phi1[k] = (1 - m_z[k])/2;
-                m_bdata[n*nq+k] = phi1[k];
-            }
-        }
-        else if(n == m_P)
-        {
-            for(int k=0;k<nq;k++)
-            {
-                phi1[k] = (1 + m_z[k])/2;
-                m_bdata[n*nq+k] = phi1[k];
-            }
-        }
-        else
-        {
-            polylib::jacobfd(nq, m_z.data(), phi1.data(), NULL, n-1, 1.0, 1.0);
-            //jacobd(nq, zquad.data(), phi1.data(), n-1, 1.0, 1.0);
-            for(int k=0;k<nq;k++)
-            {
-                phi1[k] = ((1-m_z[k])/2)*((1+m_z[k])/2)*phi1[k];
-                m_bdata[n*nq+k] = phi1[k];
-            }
-        }
-
-
-        double zmin = -1.0;
-        double zplus = 1.0;
-        std::vector<double> zmin_tmp(1,0.0);
-        zmin_tmp[0] = zmin;
-        std::vector<double> zplus_tmp(1,0.0);
-        zplus_tmp[0] = zplus;
-
-        std::vector<double> phi1_min(1,0.0);
-        std::vector<double> phi1_plus(1,0.0);
-        if(n == 0)
-        {
-            phi1_min[0]  = (1 - zmin)/2;
-            phi1_plus[0] = (1 - zplus)/2;
-        }
-        else if(n == m_P)
-        {
-            
-            phi1_min[0] = (1 + zmin)/2;
-            phi1_plus[0] = (1 + zplus)/2;
-        }
-        else
-        {
-            polylib::jacobfd(1, zmin_tmp.data(), phi1_min.data(), NULL, n-1, 1.0, 1.0);
-            phi1_min[0] = ((1-zmin)/2)*((1+zmin)/2)*phi1_min[0];
-
-            polylib::jacobfd(1, zplus_tmp.data(), phi1_plus.data(), NULL, n-1, 1.0, 1.0);
-            phi1_plus[0] = ((1-zplus)/2)*((1+zplus)/2)*phi1_plus[0];
-        }
-        std::vector<double> lr(2,0.0);
-        lr[0] = phi1_min[0];
-        lr[1] = phi1_plus[0];
+        double zmin = -1.0, zplus = 1.0;
+        double phi_left, phi_right;
+        polylib::jacobfd(1, &zmin, &phi_left, NULL, n, 0.0, 0.0);
+        polylib::jacobfd(1, &zplus, &phi_right, NULL, n, 0.0, 0.0);
+        std::vector<double> lr(2, 0.0);
+        lr[0] = phi_left;
+        lr[1] = phi_right;
         m_blr.push_back(lr);
 
-        std::vector<double> diff_mode(nq);
-
-        for(int i=0;i<nq;i++)
-        {
-            diff_mode[i] = 0;
-
-            for(int j=0;j<nq;j++)
-            {
-                diff_mode[i] = diff_mode[i] + D[i][j]*phi1[j];
-                m_dbdata[n*nq+i] = diff_mode[i];
-            }   
+        std::vector<double> diff_mode(nq, 0.0);
+        for (int i = 0; i < nq; i++) {
+            for (int j = 0; j < nq; j++)
+                diff_mode[i] += D[i][j] * phi1[j];
+            m_dbdata[n * nq + i] = diff_mode[i];
         }
     }
 
