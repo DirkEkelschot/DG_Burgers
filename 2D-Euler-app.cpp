@@ -1094,7 +1094,68 @@ int main(int argc, char* argv[])
         int P1 = P + 1;
         std::vector<double> T(P1 * P1, 0.0);
         if (inp->btype == "Modal") {
-            for (int i = 0; i < P1; ++i) T[i * P1 + i] = 1.0;
+            // Change-of-basis from hierarchical modal to Legendre via T = V^{-1} * R
+            // R[k,i] = modal basis function i at evaluation point z_k
+            // V[k,p] = Legendre polynomial p at evaluation point z_k
+            std::vector<double> zeval(P1), weval(P1);
+            polylib::zwgl(zeval.data(), weval.data(), P1);
+
+            std::vector<double> Rmat(P1 * P1, 0.0);
+            for (int k = 0; k < P1; ++k) {
+                double z = zeval[k];
+                for (int ii = 0; ii < P1; ++ii) {
+                    if (ii == 0)
+                        Rmat[k * P1 + ii] = (1.0 - z) / 2.0;
+                    else if (ii == P)
+                        Rmat[k * P1 + ii] = (1.0 + z) / 2.0;
+                    else {
+                        double val;
+                        polylib::jacobfd(1, &z, &val, NULL, ii - 1, 1.0, 1.0);
+                        Rmat[k * P1 + ii] = (1.0 - z) / 2.0 * (1.0 + z) / 2.0 * val;
+                    }
+                }
+            }
+
+            std::vector<double> V(P1 * P1);
+            for (int k = 0; k < P1; ++k)
+                for (int pp = 0; pp < P1; ++pp) {
+                    double val;
+                    polylib::jacobfd(1, &zeval[k], &val, NULL, pp, 0.0, 0.0);
+                    V[k * P1 + pp] = val;
+                }
+
+            std::vector<double> aug(P1 * 2 * P1);
+            for (int r = 0; r < P1; ++r)
+                for (int c = 0; c < P1; ++c) {
+                    aug[r * 2 * P1 + c] = V[r * P1 + c];
+                    aug[r * 2 * P1 + P1 + c] = (r == c) ? 1.0 : 0.0;
+                }
+            for (int col = 0; col < P1; ++col) {
+                int pivot = col;
+                for (int r = col + 1; r < P1; ++r)
+                    if (std::fabs(aug[r * 2*P1 + col]) > std::fabs(aug[pivot * 2*P1 + col]))
+                        pivot = r;
+                if (pivot != col)
+                    for (int c = 0; c < 2 * P1; ++c)
+                        std::swap(aug[col * 2*P1 + c], aug[pivot * 2*P1 + c]);
+                double diagInv = 1.0 / aug[col * 2*P1 + col];
+                for (int c = 0; c < 2 * P1; ++c)
+                    aug[col * 2*P1 + c] *= diagInv;
+                for (int r = 0; r < P1; ++r) {
+                    if (r == col) continue;
+                    double fv = aug[r * 2*P1 + col];
+                    for (int c = 0; c < 2 * P1; ++c)
+                        aug[r * 2*P1 + c] -= fv * aug[col * 2*P1 + c];
+                }
+            }
+
+            for (int r = 0; r < P1; ++r)
+                for (int c = 0; c < P1; ++c) {
+                    double val = 0.0;
+                    for (int k = 0; k < P1; ++k)
+                        val += aug[r * 2*P1 + P1 + k] * Rmat[k * P1 + c];
+                    T[r * P1 + c] = val;
+                }
         } else {
             std::vector<double> zn = basis1D->GetZn();
             std::vector<double> V(P1 * P1);
@@ -1393,11 +1454,11 @@ int main(int argc, char* argv[])
 
         int solSize = NVAR_GPU * totalDOF;
         double adjTol = inp->adjTol;
-        int adjMaxIter = nt;
+        int adjMaxIter = inp->adjMaxIter;
 
         std::cout << "Adjoint solver: " << nE << " elements, P=" << P
                   << ", nq1d=" << nq1d << ", totalDOF=" << totalDOF << std::endl;
-        std::cout << "Max adjoint iterations = " << adjMaxIter << " (= forward nt)" << std::endl;
+        std::cout << "Max adjoint iterations = " << adjMaxIter << std::endl;
         std::cout << "Adjoint tolerance      = " << adjTol << std::endl;
 
         // Adjoint RK4 pseudo-time iteration
