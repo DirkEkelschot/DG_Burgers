@@ -289,7 +289,8 @@ static void writeVTK_solpts(const std::string& filename,
                             int nq1d,
                             const std::string& ptype,
                             const std::vector<double>& epsilon = {},
-                            const std::vector<double>& sensor = {})
+                            const std::vector<double>& sensor = {},
+                            const std::vector<int>& elemP = {})
 {
     int nE    = mesh.nElements;
     int nqVol = nq1d * nq1d;
@@ -429,24 +430,37 @@ static void writeVTK_solpts(const std::string& filename,
         out.put('\n');
     }
 
-    if (!epsilon.empty()) {
+    bool hasCellData = !epsilon.empty() || !elemP.empty();
+    if (hasCellData) {
         out << "CELL_DATA " << nCells << "\n";
         std::vector<double> cellData(nCells);
-        int ci = 0;
-        for (int e = 0; e < nE; ++e)
-            for (int ix = 0; ix < nSub; ++ix)
-                for (int iy = 0; iy < nSub; ++iy)
-                    cellData[ci++] = epsilon[e];
-        out << "SCALARS ArtificialViscosity float 1\nLOOKUP_TABLE default\n";
-        writeBinFloats(out, cellData.data(), nCells);
-        out.put('\n');
-        if (!sensor.empty()) {
-            ci = 0;
+        if (!epsilon.empty()) {
+            int ci = 0;
             for (int e = 0; e < nE; ++e)
                 for (int ix = 0; ix < nSub; ++ix)
                     for (int iy = 0; iy < nSub; ++iy)
-                        cellData[ci++] = sensor[e];
-            out << "SCALARS ShockSensor float 1\nLOOKUP_TABLE default\n";
+                        cellData[ci++] = epsilon[e];
+            out << "SCALARS ArtificialViscosity float 1\nLOOKUP_TABLE default\n";
+            writeBinFloats(out, cellData.data(), nCells);
+            out.put('\n');
+            if (!sensor.empty()) {
+                int ci2 = 0;
+                for (int e = 0; e < nE; ++e)
+                    for (int ix = 0; ix < nSub; ++ix)
+                        for (int iy = 0; iy < nSub; ++iy)
+                            cellData[ci2++] = sensor[e];
+                out << "SCALARS ShockSensor float 1\nLOOKUP_TABLE default\n";
+                writeBinFloats(out, cellData.data(), nCells);
+                out.put('\n');
+            }
+        }
+        if (!elemP.empty()) {
+            int ci = 0;
+            for (int e = 0; e < nE; ++e)
+                for (int ix = 0; ix < nSub; ++ix)
+                    for (int iy = 0; iy < nSub; ++iy)
+                        cellData[ci++] = static_cast<double>(elemP[e]);
+            out << "SCALARS PolynomialOrder float 1\nLOOKUP_TABLE default\n";
             writeBinFloats(out, cellData.data(), nCells);
             out.put('\n');
         }
@@ -514,6 +528,215 @@ static bool readRestart(const std::string& filename,
     std::cout << "Restart loaded from " << filename
               << " (time = " << time << ", iter = " << iterCount << ")" << std::endl;
     return true;
+}
+
+// Read a restart file that may have a different nqVol (quadrature size) than
+// what the current solver uses.  When nqVol differs, the solution is
+// interpolated from the old GL quadrature to the new one via tensor-product
+// Lagrange interpolation.
+static bool readRestartInterp(const std::string& filename,
+                              std::vector<std::vector<double>>& U,
+                              int nE, int nqVol_new, int nq1d_new,
+                              double& time, int& iterCount)
+{
+    iterCount = 0;
+    std::ifstream in(filename, std::ios::binary);
+    if (!in.is_open()) {
+        std::cout << "Error: cannot open restart file " << filename << std::endl;
+        return false;
+    }
+
+    int nvar, nE_file, nqVol_file;
+    in.read(reinterpret_cast<char*>(&nvar), sizeof(int));
+    in.read(reinterpret_cast<char*>(&nE_file), sizeof(int));
+    in.read(reinterpret_cast<char*>(&nqVol_file), sizeof(int));
+    in.read(reinterpret_cast<char*>(&time), sizeof(double));
+
+    if (nvar != NVAR2D || nE_file != nE) {
+        std::cout << "Error: restart file mismatch (nvar=" << nvar
+                  << " nE=" << nE_file << "), expected (" << NVAR2D
+                  << ", " << nE << ")" << std::endl;
+        return false;
+    }
+
+    if (nqVol_file == nqVol_new) {
+        int totalDOF = nE * nqVol_new;
+        for (int v = 0; v < NVAR2D; ++v) {
+            U[v].resize(totalDOF);
+            in.read(reinterpret_cast<char*>(U[v].data()), totalDOF * sizeof(double));
+        }
+        if (in.read(reinterpret_cast<char*>(&iterCount), sizeof(int)).fail())
+            iterCount = 0;
+        in.close();
+        std::cout << "Restart loaded from " << filename
+                  << " (time = " << time << ", iter = " << iterCount << ")" << std::endl;
+        return true;
+    }
+
+    // Quadrature mismatch: read old data and interpolate
+    int nq1d_old = static_cast<int>(std::round(std::sqrt((double)nqVol_file)));
+    if (nq1d_old * nq1d_old != nqVol_file) {
+        std::cout << "Error: nqVol_file=" << nqVol_file
+                  << " is not a perfect square" << std::endl;
+        return false;
+    }
+
+    std::cout << "Restart quadrature mismatch (file nq1d=" << nq1d_old
+              << ", solver nq1d=" << nq1d_new
+              << "); interpolating..." << std::endl;
+
+    int totalDOF_old = nE * nqVol_file;
+    std::vector<std::vector<double>> U_old(NVAR2D);
+    for (int v = 0; v < NVAR2D; ++v) {
+        U_old[v].resize(totalDOF_old);
+        in.read(reinterpret_cast<char*>(U_old[v].data()),
+                totalDOF_old * sizeof(double));
+    }
+    if (in.read(reinterpret_cast<char*>(&iterCount), sizeof(int)).fail())
+        iterCount = 0;
+    in.close();
+
+    // Old GL points
+    std::vector<double> zq_old(nq1d_old), wq_old(nq1d_old);
+    polylib::zwgl(zq_old.data(), wq_old.data(), nq1d_old);
+
+    // New GL points
+    std::vector<double> zq_new(nq1d_new), wq_new(nq1d_new);
+    polylib::zwgl(zq_new.data(), wq_new.data(), nq1d_new);
+
+    // 1D interpolation matrix: I[i * nq1d_old + j] = L_j(zq_new[i])
+    std::vector<double> Imat(nq1d_new * nq1d_old);
+    for (int i = 0; i < nq1d_new; ++i)
+        for (int j = 0; j < nq1d_old; ++j)
+            Imat[i * nq1d_old + j] = polylib::hgj(j, zq_new[i],
+                                                   zq_old.data(), nq1d_old,
+                                                   0.0, 0.0);
+
+    // Tensor-product interpolation per element
+    int totalDOF_new = nE * nqVol_new;
+    for (int v = 0; v < NVAR2D; ++v) {
+        U[v].resize(totalDOF_new);
+        for (int e = 0; e < nE; ++e) {
+            for (int ix = 0; ix < nq1d_new; ++ix)
+                for (int jy = 0; jy < nq1d_new; ++jy) {
+                    double val = 0.0;
+                    for (int a = 0; a < nq1d_old; ++a)
+                        for (int b = 0; b < nq1d_old; ++b)
+                            val += Imat[ix * nq1d_old + a]
+                                 * Imat[jy * nq1d_old + b]
+                                 * U_old[v][e * nqVol_file + a * nq1d_old + b];
+                    U[v][e * nqVol_new + ix * nq1d_new + jy] = val;
+                }
+        }
+    }
+
+    std::cout << "Restart loaded and interpolated from " << filename
+              << " (time = " << time << ", iter = " << iterCount << ")" << std::endl;
+    return true;
+}
+
+// ============================================================================
+// Compute lift and drag coefficients on CPU by integrating wall pressure
+// ============================================================================
+
+static void computeForceCoefficients(
+    const std::vector<std::vector<double>>& U,
+    const Mesh2D& mesh,
+    const GeomData2D& geom,
+    const std::vector<std::vector<double>>& Bmat,
+    const std::vector<std::vector<double>>& blr,
+    const std::vector<double>& wq,
+    const std::vector<double>& massLU,
+    const std::vector<int>& massPiv,
+    int P, int nq1d,
+    double rhoInf, double uInf, double vInf, double AoA_deg,
+    double chordRef,
+    double& Cl, double& Cd)
+{
+    int nE     = mesh.nElements;
+    int nqVol  = nq1d * nq1d;
+    int nmodes = (P + 1) * (P + 1);
+    int P1     = P + 1;
+    int nqFace = nq1d;
+
+    double AoA_rad = AoA_deg * M_PI / 180.0;
+    double Vinf2 = uInf * uInf + vInf * vInf;
+    double norm  = 0.5 * rhoInf * Vinf2 * chordRef;
+    if (norm < 1e-30) norm = 1.0;
+
+    double liftNx =  std::sin(AoA_rad), liftNy = -std::cos(AoA_rad);
+    double dragNx = -std::cos(AoA_rad), dragNy = -std::sin(AoA_rad);
+
+    // Project U to modal coefficients
+    std::vector<std::vector<double>> Ucoeff(NVAR2D);
+    for (int v = 0; v < NVAR2D; ++v)
+        Ucoeff[v].assign(nE * nmodes, 0.0);
+
+    for (int e = 0; e < nE; ++e) {
+        for (int v = 0; v < NVAR2D; ++v) {
+            std::vector<double> rhs(nmodes, 0.0);
+            for (int i = 0; i < P1; ++i)
+                for (int j = 0; j < P1; ++j) {
+                    int m = i * P1 + j;
+                    for (int qx = 0; qx < nq1d; ++qx)
+                        for (int qe = 0; qe < nq1d; ++qe) {
+                            int qIdx = e * nqVol + qx * nq1d + qe;
+                            double w = wq[qx] * wq[qe] * geom.detJ[qIdx];
+                            rhs[m] += w * Bmat[i][qx] * Bmat[j][qe] * U[v][qIdx];
+                        }
+                }
+
+            std::vector<double> Mcopy(nmodes * nmodes);
+            std::vector<int> pivCopy(nmodes);
+            std::memcpy(Mcopy.data(), &massLU[e * nmodes * nmodes],
+                        nmodes * nmodes * sizeof(double));
+            std::memcpy(pivCopy.data(), &massPiv[e * nmodes],
+                        nmodes * sizeof(int));
+
+            unsigned char TRANS = 'N';
+            int NRHS = 1, INFO;
+            dgetrs_(&TRANS, &nmodes, &NRHS, Mcopy.data(), &nmodes,
+                    pivCopy.data(), rhs.data(), &nmodes, &INFO);
+
+            for (int m = 0; m < nmodes; ++m)
+                Ucoeff[v][e * nmodes + m] = rhs[m];
+        }
+    }
+
+    // Integrate pressure on wall faces (bcTag == 1)
+    Cl = 0.0;
+    Cd = 0.0;
+    for (int f = 0; f < mesh.nFaces; ++f) {
+        if (mesh.faces[f].elemR >= 0) continue;
+        if (mesh.faces[f].bcTag != 1) continue;
+
+        int eL = mesh.faces[f].elemL;
+        int lfL = mesh.faces[f].faceL;
+
+        for (int q = 0; q < nqFace; ++q) {
+            double Uf[NVAR2D] = {0, 0, 0, 0};
+            for (int v = 0; v < NVAR2D; ++v)
+                for (int i = 0; i < P1; ++i)
+                    for (int j = 0; j < P1; ++j) {
+                        int mIdx = eL * nmodes + i * P1 + j;
+                        double phiXi, phiEta;
+                        if      (lfL == 0) { phiXi = Bmat[i][q];               phiEta = blr[j][0]; }
+                        else if (lfL == 1) { phiXi = blr[i][1];                phiEta = Bmat[j][q]; }
+                        else if (lfL == 2) { phiXi = Bmat[i][nqFace - 1 - q];  phiEta = blr[j][1]; }
+                        else               { phiXi = blr[i][0];                phiEta = Bmat[j][nqFace - 1 - q]; }
+                        Uf[v] += Ucoeff[v][mIdx] * phiXi * phiEta;
+                    }
+
+            double p = pressure2D(Uf[0], Uf[1], Uf[2], Uf[3]);
+            int fIdx = f * nqFace + q;
+            double nx = geom.faceNx[fIdx];
+            double ny = geom.faceNy[fIdx];
+            double wf = wq[q] * geom.faceJac[fIdx];
+
+            Cl += wf * p * (liftNx * nx + liftNy * ny) / norm;
+            Cd += wf * p * (dragNx * nx + dragNy * ny) / norm;
+        }
+    }
 }
 
 static void printProgressBar(int current, int total, int width = 50)
@@ -860,7 +1083,7 @@ static int runVariableP(Inputs2D* inp, Mesh2D& mesh)
     std::vector<int> elemP;
     if (!inp->errorIndicatorFile.empty()) {
         std::vector<double> eta = readErrorIndicator(inp->errorIndicatorFile, nE);
-        elemP = assignElementP(eta, pMin, pMax);
+        elemP = assignElementP(eta, pMin, pMax, inp->pAdaptThresholds);
     } else {
         elemP.assign(nE, pMax);
         std::cout << "No error indicator file; using P=" << pMax << " everywhere" << std::endl;
@@ -897,7 +1120,8 @@ static int runVariableP(Inputs2D* inp, Mesh2D& mesh)
     double time_restart = 0.0;
     int iter_offset = 0;
     if (!inp->restartfile.empty()) {
-        if (!readRestart(inp->restartfile, U, nE, nqVol, time_restart, iter_offset)) {
+        if (!readRestartInterp(inp->restartfile, U, nE, nqVol, nq1d,
+                               time_restart, iter_offset)) {
             std::cout << "Restart failed, exiting." << std::endl;
             return 1;
         }
@@ -1106,7 +1330,8 @@ static int runVariableP(Inputs2D* inp, Mesh2D& mesh)
     gpuCopySolutionToHost(gpu, U_flat.data());
     for (int v = 0; v < NVAR2D; ++v)
         std::memcpy(U[v].data(), &U_flat[v * totalDOF], totalDOF * sizeof(double));
-    writeVTK_solpts("solution2d_final_solpts.vtk", mesh, geom, U, zq, nq1d, inp->ptype);
+    writeVTK_solpts("solution2d_final_solpts.vtk", mesh, geom, U, zq, nq1d, inp->ptype,
+                    {}, {}, elemP);
     std::cout << "Output written to solution2d_final_solpts.vtk" << std::endl;
 
     if (!nanFound) {
@@ -1489,12 +1714,16 @@ int main(int argc, char* argv[])
         const int timerInterval = 10000;
         int lastGlobalStep = iter_offset;
 
+        bool logForces = (inp->testcase == "NACA0012");
+
         std::ofstream csvFile;
         if (iter_offset > 0) {
             csvFile.open("residual_history.csv", std::ios::app);
         } else {
             csvFile.open("residual_history.csv");
-            csvFile << "iter,rho,rhou,rhov,rhoE\n";
+            csvFile << "iter,rho,rhou,rhov,rhoE";
+            if (logForces) csvFile << ",Cl,Cd";
+            csvFile << "\n";
         }
 
         auto tBatch = std::chrono::high_resolution_clock::now();
@@ -1521,7 +1750,13 @@ int main(int argc, char* argv[])
                         << "," << perVarNorms[0]
                         << "," << perVarNorms[1]
                         << "," << perVarNorms[2]
-                        << "," << perVarNorms[3] << "\n";
+                        << "," << perVarNorms[3];
+                if (logForces) {
+                    double Cl, Cd;
+                    gpuComputeForceCoeff(gpu, inp->adjChordRef, inp->AoA, Cl, Cd);
+                    csvFile << "," << Cl << "," << Cd;
+                }
+                csvFile << "\n";
             }
 
             gpuRK4Stage(gpu, dt, 1);
@@ -1686,6 +1921,20 @@ int main(int argc, char* argv[])
         writeRestart("restart2d.bin", U, nE, nqVol, time, finalIterCount);
 
     // ========================================================================
+    // Compute and print lift/drag coefficients (NACA0012)
+    // ========================================================================
+    if (inp->testcase == "NACA0012" && !nanFound) {
+        gpuComputeDGRHS(gpu, false, time);
+        double Cl, Cd;
+        gpuComputeForceCoeff(gpu, inp->adjChordRef, inp->AoA, Cl, Cd);
+        std::cout << std::scientific << std::setprecision(10);
+        std::cout << "\nForce coefficients:" << std::endl;
+        std::cout << "  Lift coefficient (Cl) = " << Cl << std::endl;
+        std::cout << "  Drag coefficient (Cd) = " << Cd << std::endl;
+        std::cout << std::defaultfloat;
+    }
+
+    // ========================================================================
     // Adjoint solve (if requested)
     // ========================================================================
     if (inp->runAdjoint && !nanFound)
@@ -1718,6 +1967,11 @@ int main(int argc, char* argv[])
         AdjointGPUData adj;
         adjointGpuAllocate(adj, gpu);
         adj.chordRef = chordRef;
+        adj.maxAVscale = (double)P / (2.0 * CFL * (2.0 * P + 1.0));
+        std::cout << "Adjoint AV: maxAVscale(CFL) = " << adj.maxAVscale
+                  << ", input AVscale = " << gpu.AVscale
+                  << ", effective = " << std::min((double)gpu.AVscale, adj.maxAVscale)
+                  << std::endl;
 
         adjointGpuSetBasisData(Bmat_flat.data(), Dmat_flat.data(),
                                blr_flat.data(), wq.data(), P + 1, nq1d);

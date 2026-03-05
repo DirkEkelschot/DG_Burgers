@@ -91,6 +91,145 @@ static std::vector<double> computeErrorIndicator(const double* psi_flat,
 }
 
 // ============================================================================
+// Per-element truncation error estimate: ||u_P - u_{P-1}||_L2
+// Projects solution onto Legendre modal coefficients (always, regardless of
+// solver basis type), then evaluates the contribution of modes where i==P or
+// j==P (the highest-order shell).
+//
+// Returns per-element L2 norms.  Optionally fills diff_flat (same layout as
+// psi_flat: diff_flat[v*totalDOF + qIdx]) with the pointwise truncation error
+// at each quadrature point, for use in a DWR inner product.
+// ============================================================================
+
+static std::vector<double> computeTruncationError(
+    const std::vector<std::vector<double>>& U,
+    int nE, int nqVol, int nq1d,
+    const std::vector<double>& zq,
+    const std::vector<double>& wq,
+    const GeomData2D& geom,
+    int P,
+    std::vector<double>* diff_flat = nullptr)
+{
+    int P1 = P + 1;
+    int nmodes = P1 * P1;
+    int totalDOF = nE * nqVol;
+
+    // Build Legendre polynomial values at quadrature points
+    std::vector<double> zq_mut(zq);
+    std::vector<std::vector<double>> Bleg(P1, std::vector<double>(nq1d));
+    for (int n = 0; n < P1; ++n)
+        polylib::jacobfd(nq1d, zq_mut.data(), Bleg[n].data(), NULL, n, 0.0, 0.0);
+
+    if (diff_flat)
+        diff_flat->assign(NVAR2D * totalDOF, 0.0);
+
+    std::vector<double> tau(nE, 0.0);
+
+    for (int e = 0; e < nE; ++e) {
+        // Assemble and invert mass matrix for this element (Legendre basis)
+        std::vector<double> Mloc(nmodes * nmodes, 0.0);
+        for (int qx = 0; qx < nq1d; ++qx)
+            for (int qe = 0; qe < nq1d; ++qe) {
+                int qIdx = e * nqVol + qx * nq1d + qe;
+                double w = wq[qx] * wq[qe] * geom.detJ[qIdx];
+                for (int i1 = 0; i1 < P1; ++i1)
+                    for (int j1 = 0; j1 < P1; ++j1) {
+                        double phi1 = Bleg[i1][qx] * Bleg[j1][qe];
+                        int m1 = i1 * P1 + j1;
+                        for (int i2 = 0; i2 < P1; ++i2)
+                            for (int j2 = 0; j2 < P1; ++j2)
+                                Mloc[m1 * nmodes + i2 * P1 + j2]
+                                    += w * phi1 * Bleg[i2][qx] * Bleg[j2][qe];
+                    }
+            }
+
+        std::vector<double> MinvLoc(nmodes * nmodes, 0.0);
+        for (int i = 0; i < nmodes; ++i) MinvLoc[i * nmodes + i] = 1.0;
+        int INFO;
+        std::vector<int> piv(nmodes);
+        dgetrf_(&nmodes, &nmodes, Mloc.data(), &nmodes, piv.data(), &INFO);
+        unsigned char TR = 'N';
+        dgetrs_(&TR, &nmodes, &nmodes, Mloc.data(), &nmodes, piv.data(),
+                MinvLoc.data(), &nmodes, &INFO);
+
+        double val = 0.0;
+        for (int v = 0; v < NVAR2D; ++v) {
+            // Project quad-point values to Legendre coefficients
+            std::vector<double> proj(nmodes, 0.0);
+            for (int i = 0; i < P1; ++i)
+                for (int j = 0; j < P1; ++j) {
+                    int m = i * P1 + j;
+                    for (int qx = 0; qx < nq1d; ++qx)
+                        for (int qe = 0; qe < nq1d; ++qe) {
+                            int qIdx = e * nqVol + qx * nq1d + qe;
+                            double w = wq[qx] * wq[qe] * geom.detJ[qIdx];
+                            proj[m] += w * Bleg[i][qx] * Bleg[j][qe]
+                                     * U[v][qIdx];
+                        }
+                }
+
+            std::vector<double> coeff(nmodes, 0.0);
+            for (int m = 0; m < nmodes; ++m) {
+                double c = 0.0;
+                for (int mp = 0; mp < nmodes; ++mp)
+                    c += MinvLoc[m * nmodes + mp] * proj[mp];
+                coeff[m] = c;
+            }
+
+            // Evaluate u_P - u_{P-1} at quad points (modes where i==P or j==P)
+            for (int qx = 0; qx < nq1d; ++qx)
+                for (int qe = 0; qe < nq1d; ++qe) {
+                    double diff = 0.0;
+                    for (int i = 0; i < P1; ++i)
+                        for (int j = 0; j < P1; ++j) {
+                            if (i < P && j < P) continue;
+                            diff += coeff[i * P1 + j]
+                                  * Bleg[i][qx] * Bleg[j][qe];
+                        }
+                    int qIdx = e * nqVol + qx * nq1d + qe;
+                    double w = wq[qx] * wq[qe] * geom.detJ[qIdx];
+                    val += w * diff * diff;
+
+                    if (diff_flat)
+                        (*diff_flat)[v * totalDOF + qIdx] = diff;
+                }
+        }
+        tau[e] = std::sqrt(val);
+    }
+
+    return tau;
+}
+
+// ============================================================================
+// DWR error indicator: pointwise inner product of adjoint and truncation error
+// eta_e = | sum_v sum_q  w_q * detJ_q * psi_v(q) * diff_v(q) |
+// ============================================================================
+
+static std::vector<double> computeDWR(
+    const double* psi_flat,
+    const std::vector<double>& diff_flat,
+    int nE, int nqVol, int nq1d,
+    int totalDOF,
+    const std::vector<double>& wq,
+    const GeomData2D& geom)
+{
+    std::vector<double> dwr(nE, 0.0);
+    for (int e = 0; e < nE; ++e) {
+        double val = 0.0;
+        for (int v = 0; v < NVAR2D; ++v)
+            for (int qx = 0; qx < nq1d; ++qx)
+                for (int qe = 0; qe < nq1d; ++qe) {
+                    int idx = e * nqVol + qx * nq1d + qe;
+                    double w = wq[qx] * wq[qe] * geom.detJ[idx];
+                    val += w * psi_flat[v * totalDOF + idx]
+                             * diff_flat[v * totalDOF + idx];
+                }
+        dwr[e] = std::fabs(val);
+    }
+    return dwr;
+}
+
+// ============================================================================
 // VTK output for adjoint solution
 // ============================================================================
 
@@ -104,7 +243,11 @@ static void writeAdjointVTK(const std::string& filename,
                             const std::vector<double>& wq,
                             const std::vector<double>& zVis,
                             int P, int nq1d,
-                            const std::vector<double>& eta = {})
+                            const std::vector<double>& eta = {},
+                            const std::vector<double>& tau = {},
+                            const std::vector<double>& dwr = {},
+                            const std::vector<double>& trunc_diff = {},
+                            const std::vector<std::vector<double>>& U = {})
 {
     int nE = mesh.nElements;
     int nqVol = nq1d * nq1d;
@@ -115,42 +258,66 @@ static void writeAdjointVTK(const std::string& filename,
 
     std::vector<double> xVis(totalPts), yVis(totalPts);
     std::vector<std::vector<double>> PsiVis(NVAR2D, std::vector<double>(totalPts));
+    bool hasU = !U.empty();
+    std::vector<std::vector<double>> UVis;
+    if (hasU)
+        UVis.assign(NVAR2D, std::vector<double>(totalPts));
 
     for (int e = 0; e < nE; ++e) {
-        std::vector<double> coeff(NVAR2D * nmodes, 0.0);
-        for (int v = 0; v < NVAR2D; ++v) {
-            std::vector<double> proj(nmodes, 0.0);
-            for (int i = 0; i <= P; ++i)
-                for (int j = 0; j <= P; ++j) {
-                    int m = i * (P + 1) + j;
-                    for (int qx = 0; qx < nq1d; ++qx)
-                        for (int qe = 0; qe < nq1d; ++qe) {
-                            int qIdx = e * nqVol + qx * nq1d + qe;
-                            double w = wq[qx] * wq[qe] * geom.detJ[qIdx];
-                            proj[m] += w * Bmat[i][qx] * Bmat[j][qe] * psi[v][qIdx];
-                        }
-                }
-            for (int m = 0; m < nmodes; ++m) {
-                double val = 0.0;
-                for (int mp = 0; mp < nmodes; ++mp)
-                    val += Minv[e * nmodes * nmodes + m * nmodes + mp] * proj[mp];
-                coeff[v * nmodes + m] = val;
-            }
-        }
-
-        for (int ix = 0; ix < nVis; ++ix)
-            for (int iy = 0; iy < nVis; ++iy) {
-                int idx = e * nVisVol + ix * nVis + iy;
-                refToPhys(mesh, e, zVis[ix], zVis[iy], xVis[idx], yVis[idx]);
-                for (int v = 0; v < NVAR2D; ++v) {
+        // Lambda to project a quad-point field to modal coefficients
+        auto projectToCoeff = [&](const std::vector<std::vector<double>>& field,
+                                  std::vector<double>& cof) {
+            cof.assign(NVAR2D * nmodes, 0.0);
+            for (int v = 0; v < NVAR2D; ++v) {
+                std::vector<double> proj(nmodes, 0.0);
+                for (int i = 0; i <= P; ++i)
+                    for (int j = 0; j <= P; ++j) {
+                        int m = i * (P + 1) + j;
+                        for (int qx = 0; qx < nq1d; ++qx)
+                            for (int qe = 0; qe < nq1d; ++qe) {
+                                int qIdx = e * nqVol + qx * nq1d + qe;
+                                double w = wq[qx] * wq[qe] * geom.detJ[qIdx];
+                                proj[m] += w * Bmat[i][qx] * Bmat[j][qe] * field[v][qIdx];
+                            }
+                    }
+                for (int m = 0; m < nmodes; ++m) {
                     double val = 0.0;
-                    for (int i = 0; i <= P; ++i)
-                        for (int j = 0; j <= P; ++j)
-                            val += coeff[v * nmodes + i*(P+1)+j]
-                                 * Bvis[i][ix] * Bvis[j][iy];
-                    PsiVis[v][idx] = val;
+                    for (int mp = 0; mp < nmodes; ++mp)
+                        val += Minv[e * nmodes * nmodes + m * nmodes + mp] * proj[mp];
+                    cof[v * nmodes + m] = val;
                 }
             }
+        };
+
+        auto evalAtVis = [&](const std::vector<double>& cof,
+                             std::vector<std::vector<double>>& out) {
+            for (int ix = 0; ix < nVis; ++ix)
+                for (int iy = 0; iy < nVis; ++iy) {
+                    int idx = e * nVisVol + ix * nVis + iy;
+                    for (int v = 0; v < NVAR2D; ++v) {
+                        double val = 0.0;
+                        for (int i = 0; i <= P; ++i)
+                            for (int j = 0; j <= P; ++j)
+                                val += cof[v * nmodes + i*(P+1)+j]
+                                     * Bvis[i][ix] * Bvis[j][iy];
+                        out[v][idx] = val;
+                    }
+                }
+        };
+
+        std::vector<double> coeff;
+        projectToCoeff(psi, coeff);
+        for (int ix = 0; ix < nVis; ++ix)
+            for (int iy = 0; iy < nVis; ++iy)
+                refToPhys(mesh, e, zVis[ix], zVis[iy],
+                          xVis[e * nVisVol + ix * nVis + iy],
+                          yVis[e * nVisVol + ix * nVis + iy]);
+        evalAtVis(coeff, PsiVis);
+
+        if (hasU) {
+            projectToCoeff(U, coeff);
+            evalAtVis(coeff, UVis);
+        }
     }
 
     std::ofstream out(filename);
@@ -190,13 +357,68 @@ static void writeAdjointVTK(const std::string& filename,
             out << PsiVis[v][i] << "\n";
     }
 
-    if (!eta.empty()) {
+    if (hasU) {
+        const char* uNames[4] = {"rho", "rhou", "rhov", "rhoE"};
+        for (int v = 0; v < NVAR2D; ++v) {
+            out << "SCALARS " << uNames[v] << " double 1\nLOOKUP_TABLE default\n";
+            for (int i = 0; i < totalPts; ++i)
+                out << UVis[v][i] << "\n";
+        }
+    }
+
+    if (!trunc_diff.empty()) {
+        int totalDOF = nE * nqVol;
+        std::vector<double> diffMagVis(totalPts, 0.0);
+        for (int e = 0; e < nE; ++e) {
+            // Project each diff component to vis points, accumulate magnitude^2
+            for (int v = 0; v < NVAR2D; ++v) {
+                std::vector<double> proj(nmodes, 0.0);
+                for (int i = 0; i <= P; ++i)
+                    for (int j = 0; j <= P; ++j) {
+                        int m = i * (P + 1) + j;
+                        for (int qx = 0; qx < nq1d; ++qx)
+                            for (int qe = 0; qe < nq1d; ++qe) {
+                                int qIdx = e * nqVol + qx * nq1d + qe;
+                                double w = wq[qx] * wq[qe] * geom.detJ[qIdx];
+                                proj[m] += w * Bmat[i][qx] * Bmat[j][qe]
+                                         * trunc_diff[v * totalDOF + qIdx];
+                            }
+                    }
+                std::vector<double> cof(nmodes, 0.0);
+                for (int m = 0; m < nmodes; ++m)
+                    for (int mp = 0; mp < nmodes; ++mp)
+                        cof[m] += Minv[e * nmodes * nmodes + m * nmodes + mp] * proj[mp];
+
+                for (int ix = 0; ix < nVis; ++ix)
+                    for (int iy = 0; iy < nVis; ++iy) {
+                        double val = 0.0;
+                        for (int i = 0; i <= P; ++i)
+                            for (int j = 0; j <= P; ++j)
+                                val += cof[i * (P+1) + j] * Bvis[i][ix] * Bvis[j][iy];
+                        diffMagVis[e * nVisVol + ix * nVis + iy] += val * val;
+                    }
+            }
+        }
+        out << "SCALARS TruncationError_pointwise double 1\nLOOKUP_TABLE default\n";
+        for (int i = 0; i < totalPts; ++i)
+            out << std::sqrt(diffMagVis[i]) << "\n";
+    }
+
+    if (!eta.empty() || !tau.empty() || !dwr.empty()) {
         out << "CELL_DATA " << nCells << "\n";
-        out << "SCALARS ErrorIndicator double 1\nLOOKUP_TABLE default\n";
-        for (int e = 0; e < nE; ++e)
-            for (int ix = 0; ix < nSub; ++ix)
-                for (int iy = 0; iy < nSub; ++iy)
-                    out << eta[e] << "\n";
+
+        auto writeCellScalar = [&](const char* name, const std::vector<double>& v) {
+            if (v.empty()) return;
+            out << "SCALARS " << name << " double 1\nLOOKUP_TABLE default\n";
+            for (int e = 0; e < nE; ++e)
+                for (int ix = 0; ix < nSub; ++ix)
+                    for (int iy = 0; iy < nSub; ++iy)
+                        out << v[e] << "\n";
+        };
+
+        writeCellScalar("TruncationError", tau);
+        writeCellScalar("ErrorIndicator", eta);
+        writeCellScalar("DWR", dwr);
     }
 
     out.close();
@@ -213,7 +435,11 @@ static void writeAdjointVTK_solpts(const std::string& filename,
                                    const std::vector<double>& zq,
                                    int nq1d,
                                    const std::string& ptype,
-                                   const std::vector<double>& eta = {})
+                                   const std::vector<double>& eta = {},
+                                   const std::vector<double>& tau = {},
+                                   const std::vector<double>& dwr = {},
+                                   const std::vector<double>& trunc_diff = {},
+                                   const std::vector<std::vector<double>>& U = {})
 {
     int nE    = mesh.nElements;
     int nqVol = nq1d * nq1d;
@@ -245,8 +471,12 @@ static void writeAdjointVTK_solpts(const std::string& filename,
 
     int totalPts = nE * nAugVol;
 
+    bool hasU = !U.empty();
     std::vector<double> xPts(totalPts), yPts(totalPts);
     std::vector<std::vector<double>> PsiAug(NVAR2D, std::vector<double>(totalPts));
+    std::vector<std::vector<double>> UAug;
+    if (hasU)
+        UAug.assign(NVAR2D, std::vector<double>(totalPts));
 
     for (int e = 0; e < nE; ++e)
         for (int i = 0; i < nAug; ++i)
@@ -261,6 +491,15 @@ static void writeAdjointVTK_solpts(const std::string& filename,
                             val += Interp[i * nq1d + a] * Interp[j * nq1d + b]
                                  * psi[v][e * nqVol + a * nq1d + b];
                     PsiAug[v][idx] = val;
+
+                    if (hasU) {
+                        double uval = 0.0;
+                        for (int a = 0; a < nq1d; ++a)
+                            for (int b = 0; b < nq1d; ++b)
+                                uval += Interp[i * nq1d + a] * Interp[j * nq1d + b]
+                                      * U[v][e * nqVol + a * nq1d + b];
+                        UAug[v][idx] = uval;
+                    }
                 }
             }
 
@@ -301,13 +540,49 @@ static void writeAdjointVTK_solpts(const std::string& filename,
             out << PsiAug[v][i] << "\n";
     }
 
-    if (!eta.empty()) {
-        out << "CELL_DATA " << nCells << "\n";
-        out << "SCALARS ErrorIndicator double 1\nLOOKUP_TABLE default\n";
+    if (hasU) {
+        const char* uNames[4] = {"rho", "rhou", "rhov", "rhoE"};
+        for (int v = 0; v < NVAR2D; ++v) {
+            out << "SCALARS " << uNames[v] << " double 1\nLOOKUP_TABLE default\n";
+            for (int i = 0; i < totalPts; ++i)
+                out << UAug[v][i] << "\n";
+        }
+    }
+
+    if (!trunc_diff.empty()) {
+        int totalDOF = nE * nqVol;
+        std::vector<double> diffMagAug(totalPts, 0.0);
         for (int e = 0; e < nE; ++e)
-            for (int ix = 0; ix < nSub; ++ix)
-                for (int iy = 0; iy < nSub; ++iy)
-                    out << eta[e] << "\n";
+            for (int v = 0; v < NVAR2D; ++v)
+                for (int i = 0; i < nAug; ++i)
+                    for (int j = 0; j < nAug; ++j) {
+                        double val = 0.0;
+                        for (int a = 0; a < nq1d; ++a)
+                            for (int b = 0; b < nq1d; ++b)
+                                val += Interp[i * nq1d + a] * Interp[j * nq1d + b]
+                                     * trunc_diff[v * totalDOF + e * nqVol + a * nq1d + b];
+                        diffMagAug[e * nAugVol + i * nAug + j] += val * val;
+                    }
+        out << "SCALARS TruncationError_pointwise double 1\nLOOKUP_TABLE default\n";
+        for (int i = 0; i < totalPts; ++i)
+            out << std::sqrt(diffMagAug[i]) << "\n";
+    }
+
+    if (!eta.empty() || !tau.empty() || !dwr.empty()) {
+        out << "CELL_DATA " << nCells << "\n";
+
+        auto writeCellScalar = [&](const char* name, const std::vector<double>& v) {
+            if (v.empty()) return;
+            out << "SCALARS " << name << " double 1\nLOOKUP_TABLE default\n";
+            for (int e = 0; e < nE; ++e)
+                for (int ix = 0; ix < nSub; ++ix)
+                    for (int iy = 0; iy < nSub; ++iy)
+                        out << v[e] << "\n";
+        };
+
+        writeCellScalar("TruncationError", tau);
+        writeCellScalar("ErrorIndicator", eta);
+        writeCellScalar("DWR", dwr);
     }
 
     out.close();
@@ -365,14 +640,16 @@ static void writeAdjointRestart(const std::string& filename,
               << " (iter = " << iter << ")" << std::endl;
 }
 
-static bool readAdjointRestart(const std::string& filename,
-                               double* psi_flat, int solSize,
-                               int nE, int nqVol, int& iter)
+// Returns: 1 = loaded OK, 0 = file not found (non-fatal), -1 = data mismatch (fatal)
+static int readAdjointRestart(const std::string& filename,
+                              double* psi_flat, int solSize,
+                              int nE, int nqVol, int& iter)
 {
     std::ifstream in(filename, std::ios::binary);
     if (!in.is_open()) {
-        std::cout << "Error: cannot open adjoint restart file " << filename << std::endl;
-        return false;
+        std::cout << "Warning: adjoint restart file " << filename
+                  << " not found, starting from scratch." << std::endl;
+        return 0;
     }
     int nvar, nE_file, nqVol_file;
     in.read(reinterpret_cast<char*>(&nvar), sizeof(int));
@@ -383,13 +660,13 @@ static bool readAdjointRestart(const std::string& filename,
         std::cout << "Error: adjoint restart file mismatch (nvar=" << nvar
                   << " nE=" << nE_file << " nqVol=" << nqVol_file
                   << "), expected (" << NVAR2D << ", " << nE << ", " << nqVol << ")" << std::endl;
-        return false;
+        return -1;
     }
     in.read(reinterpret_cast<char*>(psi_flat), solSize * sizeof(double));
     in.close();
     std::cout << "Adjoint restart loaded from " << filename
               << " (iter = " << iter << ")" << std::endl;
-    return true;
+    return 1;
 }
 
 static void printProgressBar(int current, int total, int width = 50)
@@ -424,7 +701,7 @@ static int runVariablePAdjoint(Inputs2D* inp, Mesh2D& mesh)
     std::vector<int> elemP;
     if (!inp->errorIndicatorFile.empty()) {
         std::vector<double> eta = readErrorIndicator(inp->errorIndicatorFile, nE);
-        elemP = assignElementP(eta, pMin, pMax);
+        elemP = assignElementP(eta, pMin, pMax, inp->pAdaptThresholds);
     } else {
         elemP.assign(nE, pMax);
         std::cout << "No error indicator file; using P=" << pMax << " everywhere" << std::endl;
@@ -521,6 +798,18 @@ static int runVariablePAdjoint(Inputs2D* inp, Mesh2D& mesh)
     } else {
         std::cout << "Error: adjoint solver requires a restart file" << std::endl;
         return 1;
+    }
+
+    // Truncation error estimate: ||u_P - u_{P-1}||
+    std::vector<double> trunc_diff;
+    std::vector<double> tau = computeTruncationError(
+        U, nE, nqVol, nq1d, zq, wq, geom, P, &trunc_diff);
+    {
+        double tau_max = *std::max_element(tau.begin(), tau.end());
+        double tau_sum = 0.0;
+        for (auto& v : tau) tau_sum += v;
+        std::cout << "Truncation error (P-to-P-1): max=" << tau_max
+                  << "  sum=" << tau_sum << std::endl;
     }
 
     // Set up GPU
@@ -712,6 +1001,15 @@ static int runVariablePAdjoint(Inputs2D* inp, Mesh2D& mesh)
     adj.fullAV = (inp->btype == "Modal");
     adjointGpuSetBasisData(Bmat_flat.data(), Dmat_flat.data(),
                            blr_flat.data(), wq.data(), P1, nq1d);
+
+    double CFL = inp->CFL;
+    double dt = inp->dt;
+    adj.maxAVscale = (double)pMax / (2.0 * CFL * (2.0 * pMax + 1.0));
+    std::cout << "Adjoint AV: maxAVscale(CFL) = " << adj.maxAVscale
+              << ", input AVscale = " << gpu.AVscale
+              << ", effective = " << std::min((double)gpu.AVscale, adj.maxAVscale)
+              << std::endl;
+
     adjointComputeFrozenAlpha(adj, gpu);
 
     double objVal = adjointComputeForceCoeff(adj, gpu, chordRef, forceNx, forceNy);
@@ -721,8 +1019,6 @@ static int runVariablePAdjoint(Inputs2D* inp, Mesh2D& mesh)
     int solSize = NVAR_GPU * adj.primaryDOF;
     int adjMaxIter = inp->adjMaxIter;
     double adjTol = inp->adjTol;
-    double CFL = inp->CFL;
-    double dt = inp->dt;
 
     std::cout << "Variable-P adjoint: " << nE << " elements, PMin=" << pMin
               << ", PMax=" << pMax << ", maxIter=" << adjMaxIter << std::endl;
@@ -730,27 +1026,38 @@ static int runVariablePAdjoint(Inputs2D* inp, Mesh2D& mesh)
     int iterStart = 0;
     if (!inp->adjRestartFile.empty()) {
         std::vector<double> psi_restart(solSize);
-        if (!readAdjointRestart(inp->adjRestartFile, psi_restart.data(),
-                                solSize, nE, nqVol, iterStart)) {
+        int rstatus = readAdjointRestart(inp->adjRestartFile, psi_restart.data(),
+                                         solSize, nE, nqVol, iterStart);
+        if (rstatus < 0) {
             std::cout << "Adjoint restart failed, exiting." << std::endl;
             for (auto& [p, ag] : adjGroups) adjointFreePGroup(ag);
             adjointGpuFree(adj);
             gpuFree(gpu);
             return 1;
         }
-        adjointCopySolutionToDevice(adj, psi_restart.data(), solSize);
-        std::cout << "Adjoint restarting from iteration " << iterStart << std::endl;
+        if (rstatus > 0) {
+            adjointCopySolutionToDevice(adj, psi_restart.data(), solSize);
+            std::cout << "Adjoint restarting from iteration " << iterStart << std::endl;
+        }
     }
 
     // Adjoint iteration
     auto tStart = std::chrono::high_resolution_clock::now();
     bool converged = false, nanFound = false;
 
+    bool useDirectRHS = (adjGroups.size() == 1 && adj.modalMode);
+    if (useDirectRHS)
+        std::cout << "Using direct modal adjoint RHS (fused kernel)" << std::endl;
+
     auto computeAdjRHS = [&](bool usePsiTmp) {
-        adjointZeroCoeffArrays(adj, gpu);
-        for (auto& [p, ag] : adjGroups)
-            adjointComputeRHS_group(adj, gpu, ag, usePsiTmp);
-        adjointAddObjectiveGradient(adj, gpu);
+        if (useDirectRHS) {
+            adjointComputeRHS(adj, gpu, usePsiTmp);
+        } else {
+            adjointZeroCoeffArrays(adj, gpu);
+            for (auto& [p, ag] : adjGroups)
+                adjointComputeRHS_group(adj, gpu, ag, usePsiTmp);
+            adjointAddObjectiveGradient(adj, gpu);
+        }
     };
 
     std::vector<double> psi_chk(solSize);
@@ -816,8 +1123,11 @@ static int runVariablePAdjoint(Inputs2D* inp, Mesh2D& mesh)
             std::vector<double> eta_chk = computeErrorIndicator(
                 psi_quad_chk.data(), nE, nqVol, nq1d, totalDOF, wq, geom);
 
+            std::vector<double> dwr_chk = computeDWR(
+                psi_quad_chk.data(), trunc_diff, nE, nqVol, nq1d, totalDOF, wq, geom);
+
             std::string chkVtk = "adjoint_checkpoint_" + std::to_string(iter + 1) + ".vtk";
-            writeAdjointVTK_solpts(chkVtk, mesh, geom, psi_vtk, zq, nq1d, inp->ptype, eta_chk);
+            writeAdjointVTK_solpts(chkVtk, mesh, geom, psi_vtk, zq, nq1d, inp->ptype, eta_chk, tau, dwr_chk, trunc_diff, U);
 
             std::vector<double> psi_raw(solSize);
             adjointCopySolutionToHost(adj, psi_raw.data(), solSize);
@@ -846,12 +1156,15 @@ static int runVariablePAdjoint(Inputs2D* inp, Mesh2D& mesh)
         std::memcpy(psi[v].data(), &psi_flat[v * totalDOF], totalDOF * sizeof(double));
     }
 
-    writeAdjointVTK_solpts("adjoint2d_final_solpts.vtk", mesh, geom, psi, zq, nq1d, inp->ptype);
-    std::cout << "Adjoint output written to adjoint2d_final_solpts.vtk" << std::endl;
-
     // Error indicator
     std::vector<double> eta = computeErrorIndicator(
         psi_flat.data(), nE, nqVol, nq1d, totalDOF, wq, geom);
+
+    std::vector<double> dwr = computeDWR(
+        psi_flat.data(), trunc_diff, nE, nqVol, nq1d, totalDOF, wq, geom);
+
+    writeAdjointVTK_solpts("adjoint2d_final_solpts.vtk", mesh, geom, psi, zq, nq1d, inp->ptype, eta, tau, dwr, trunc_diff, U);
+    std::cout << "Adjoint output written to adjoint2d_final_solpts.vtk" << std::endl;
 
     if (!nanFound) {
         std::vector<double> psi_raw(solSize);
@@ -863,14 +1176,18 @@ static int runVariablePAdjoint(Inputs2D* inp, Mesh2D& mesh)
         double eta_max = *std::max_element(eta.begin(), eta.end());
         double eta_sum = 0.0;
         for (auto& v : eta) eta_sum += v;
+        double dwr_max = *std::max_element(dwr.begin(), dwr.end());
+        double dwr_sum = 0.0;
+        for (auto& v : dwr) dwr_sum += v;
         std::cout << "\nSensitivity: max(eta)=" << eta_max << "  sum(eta)=" << eta_sum << std::endl;
+        std::cout << "DWR:         max(dwr)=" << dwr_max << "  sum(dwr)=" << dwr_sum << std::endl;
 
         std::ofstream efile("error_indicator.dat");
-        efile << "# element   eta\n";
+        efile << "# element   eta   tau   dwr\n";
         for (int e = 0; e < nE; ++e)
-            efile << e << " " << eta[e] << "\n";
+            efile << e << " " << eta[e] << " " << tau[e] << " " << dwr[e] << "\n";
         efile.close();
-        std::cout << "Sensitivity indicators written to error_indicator.dat" << std::endl;
+        std::cout << "Error indicators written to error_indicator.dat" << std::endl;
     }
 
     for (auto& [p, ag] : adjGroups) adjointFreePGroup(ag);
@@ -976,7 +1293,9 @@ int main(int argc, char* argv[])
         zVis[i] = -1.0 + 2.0 * i / (nVis - 1);
 
     std::vector<std::vector<double>> Bvis;
-    {
+    if (modalMode) {
+        evalModalBasis1D(P, zVis, Bvis);
+    } else {
         std::vector<double> zn = gpuBasis->GetZn();
         evalNodalBasis1D(P, inp->ptype, zn, zVis, Bvis);
     }
@@ -1002,6 +1321,20 @@ int main(int argc, char* argv[])
     double time_restart = 0.0;
     if (!readRestart(inp->restartfile, U, nE, nqVol, time_restart))
         return 1;
+
+    // ========================================================================
+    // Truncation error estimate: ||u_P - u_{P-1}||
+    // ========================================================================
+    std::vector<double> trunc_diff;
+    std::vector<double> tau = computeTruncationError(
+        U, nE, nqVol, nq1d, zq, wq, geom, P, &trunc_diff);
+    {
+        double tau_max = *std::max_element(tau.begin(), tau.end());
+        double tau_sum = 0.0;
+        for (auto& v : tau) tau_sum += v;
+        std::cout << "Truncation error (P-to-P-1): max=" << tau_max
+                  << "  sum=" << tau_sum << std::endl;
+    }
 
     // ========================================================================
     // Force direction for lift/drag objective
@@ -1186,6 +1519,11 @@ int main(int argc, char* argv[])
     adjointGpuAllocate(adj, gpu);
     adj.chordRef = chordRef;
     adj.fullAV = (inp->btype == "Modal");
+    adj.maxAVscale = (double)P / (2.0 * CFL * (2.0 * P + 1.0));
+    std::cout << "Adjoint AV: maxAVscale(CFL) = " << adj.maxAVscale
+              << ", input AVscale = " << gpu.AVscale
+              << ", effective = " << std::min((double)gpu.AVscale, adj.maxAVscale)
+              << std::endl;
 
     adjointGpuSetBasisData(Bmat_flat.data(), Dmat_flat.data(),
                            blr_flat.data(), wq.data(), P + 1, nq1d);
@@ -1210,16 +1548,19 @@ int main(int argc, char* argv[])
     int iterStart = 0;
     if (!inp->adjRestartFile.empty()) {
         std::vector<double> psi_restart(solSize);
-        if (!readAdjointRestart(inp->adjRestartFile, psi_restart.data(),
-                                solSize, nE, nqVol, iterStart)) {
+        int rstatus = readAdjointRestart(inp->adjRestartFile, psi_restart.data(),
+                                         solSize, nE, nqVol, iterStart);
+        if (rstatus < 0) {
             std::cout << "Adjoint restart failed, exiting." << std::endl;
             adjointGpuFree(adj);
             gpuFree(gpu);
             delete inp;
             return 1;
         }
-        adjointCopySolutionToDevice(adj, psi_restart.data(), solSize);
-        std::cout << "Adjoint restarting from iteration " << iterStart << std::endl;
+        if (rstatus > 0) {
+            adjointCopySolutionToDevice(adj, psi_restart.data(), solSize);
+            std::cout << "Adjoint restarting from iteration " << iterStart << std::endl;
+        }
     }
 
     std::cout << "Adjoint solver initialized: " << nE << " elements, P=" << P
@@ -1306,9 +1647,12 @@ int main(int argc, char* argv[])
             std::vector<double> eta_chk = computeErrorIndicator(
                 psi_quad_chk.data(), nE, nqVol, nq1d, totalDOF, wq, geom);
 
+            std::vector<double> dwr_chk = computeDWR(
+                psi_quad_chk.data(), trunc_diff, nE, nqVol, nq1d, totalDOF, wq, geom);
+
             std::string chkVtk = "adjoint_checkpoint_" + std::to_string(iter + 1) + ".vtk";
             writeAdjointVTK(chkVtk, mesh, geom, psi_vtk, Bmat, Bvis,
-                            Minv, wq, zVis, P, nq1d, eta_chk);
+                            Minv, wq, zVis, P, nq1d, eta_chk, tau, dwr_chk, trunc_diff, U);
 
             adjointCopySolutionToHost(adj, psi_chk.data(), solSize);
             std::string chkBin = "adjoint_restart_" + std::to_string(iter + 1) + ".bin";
@@ -1341,9 +1685,12 @@ int main(int argc, char* argv[])
     std::vector<double> eta = computeErrorIndicator(
         psi_flat.data(), nE, nqVol, nq1d, totalDOF, wq, geom);
 
+    std::vector<double> dwr = computeDWR(
+        psi_flat.data(), trunc_diff, nE, nqVol, nq1d, totalDOF, wq, geom);
+
     writeAdjointVTK("adjoint2d_final.vtk", mesh, geom, psi, Bmat, Bvis,
-                    Minv, wq, zVis, P, nq1d, eta);
-    writeAdjointVTK_solpts("adjoint2d_final_solpts.vtk", mesh, geom, psi, zq, nq1d, inp->ptype, eta);
+                    Minv, wq, zVis, P, nq1d, eta, tau, dwr, trunc_diff, U);
+    writeAdjointVTK_solpts("adjoint2d_final_solpts.vtk", mesh, geom, psi, zq, nq1d, inp->ptype, eta, tau, dwr, trunc_diff, U);
     std::cout << "Adjoint solution written to adjoint2d_final.vtk" << std::endl;
     std::cout << "Adjoint solution-point output written to adjoint2d_final_solpts.vtk" << std::endl;
 
@@ -1396,20 +1743,24 @@ int main(int argc, char* argv[])
     }
 
     // ========================================================================
-    // Write sensitivity indicator text file (reuses eta computed above)
+    // Write sensitivity indicator text file (reuses eta, tau, dwr above)
     // ========================================================================
     {
         double eta_max = *std::max_element(eta.begin(), eta.end());
         double eta_sum = 0.0;
         for (auto& v : eta) eta_sum += v;
+        double dwr_max = *std::max_element(dwr.begin(), dwr.end());
+        double dwr_sum = 0.0;
+        for (auto& v : dwr) dwr_sum += v;
         std::cout << "\nSensitivity: max(eta)=" << eta_max << "  sum(eta)=" << eta_sum << std::endl;
+        std::cout << "DWR:         max(dwr)=" << dwr_max << "  sum(dwr)=" << dwr_sum << std::endl;
 
         std::ofstream efile("error_indicator.dat");
-        efile << "# element   eta\n";
+        efile << "# element   eta   tau   dwr\n";
         for (int e = 0; e < nE; ++e)
-            efile << e << " " << eta[e] << "\n";
+            efile << e << " " << eta[e] << " " << tau[e] << " " << dwr[e] << "\n";
         efile.close();
-        std::cout << "Sensitivity indicators written to error_indicator.dat" << std::endl;
+        std::cout << "Error indicators written to error_indicator.dat" << std::endl;
     }
 
     // ========================================================================

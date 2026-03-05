@@ -78,3 +78,25 @@ target_link_libraries(app2d_adjoint ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES})
 set_property(TARGET app2d_adjoint PROPERTY CXX_STANDARD 17)
 set_property(TARGET app2d_adjoint PROPERTY CUDA_STANDARD 17)
 set_target_properties(app2d_adjoint PROPERTIES CUDA_ARCHITECTURES "90")
+
+# Truncation error utility (CPU only, no CUDA)
+add_executable(truncerr
+    src/Polylib.cpp
+    src/basis.cpp
+    src/basis_poly.cpp
+    src/basis_functions.cpp
+    src/io.cpp
+    src/tinyxml.cpp
+    src/tinyxmlerror.cpp
+    src/tinyxmlparser.cpp
+    src/tinystr.cpp
+    src/mesh2d.cpp
+    src/geom2d.cpp
+    src/euler2d.cpp
+    truncation-error-app.cpp
+)
+if(DEFAULT_BLAS_ROOT AND EXISTS "${DEFAULT_BLAS_ROOT}/include")
+    target_include_directories(truncerr PRIVATE "${DEFAULT_BLAS_ROOT}/include")
+endif()
+target_link_libraries(truncerr ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES})
+set_property(TARGET truncerr PROPERTY CXX_STANDARD 17)

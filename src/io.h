@@ -54,6 +54,7 @@ struct Inputs2D {
     int    pMin             = 0;   // 0 = disabled, use global porder
     int    pMax             = 0;
     std::string errorIndicatorFile;
+    std::vector<double> pAdaptThresholds;
 };
 
 void ParseEquals(const std::string &line, std::string &lhs,

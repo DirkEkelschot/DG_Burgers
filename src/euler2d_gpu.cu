@@ -1729,3 +1729,107 @@ void gpuComputeDGRHS_group(GPUSolverData& gpu, PGroupGPU& grp,
         nEG, P1, nq1d, nmodes, nqVol, totalDOF, grp.d_elemIdx);
 }
 
+// ============================================================================
+// Wall pressure force integration (lift / drag)
+// ============================================================================
+
+__global__ void wallForceReductionKernel(
+    const double* __restrict__ d_Ucoeff,
+    const double* __restrict__ d_faceNx,
+    const double* __restrict__ d_faceNy,
+    const double* __restrict__ d_faceJac,
+    const int*    __restrict__ d_elem2face,
+    const int*    __restrict__ d_face_elemL,
+    const int*    __restrict__ d_face_elemR,
+    const int*    __restrict__ d_face_bcType,
+    double* __restrict__ d_forceBuf,
+    int nE, int P1, int nq1d, int nmodes, int nqFace,
+    double normalization, double forceNx, double forceNy)
+{
+    extern __shared__ double sdata[];
+    int tid = threadIdx.x;
+    int e   = blockIdx.x;
+    double mySum = 0.0;
+
+    if (e < nE) {
+        for (int lf = 0; lf < 4; ++lf) {
+            int f = d_elem2face[e * 4 + lf];
+            if (d_face_elemR[f] >= 0) continue;
+            if (d_face_bcType[f] != 1) continue;
+            if (e != d_face_elemL[f]) continue;
+
+            for (int q = tid; q < nqFace; q += blockDim.x) {
+                int fIdx = f * nqFace + q;
+                double nx = d_faceNx[fIdx];
+                double ny = d_faceNy[fIdx];
+                double wf = c_wq[q] * d_faceJac[fIdx];
+
+                double Uf[4] = {0, 0, 0, 0};
+                for (int vv = 0; vv < 4; ++vv)
+                    for (int ii = 0; ii < P1; ++ii)
+                        for (int jj = 0; jj < P1; ++jj)
+                            Uf[vv] += d_Ucoeff[vv * nE * nmodes + e * nmodes + ii * P1 + jj]
+                                    * evalPhiFace(lf, ii, jj, q, P1, nq1d);
+
+                double p = pressure_d(Uf[0], Uf[1], Uf[2], Uf[3]);
+                mySum += wf * p * (forceNx * nx + forceNy * ny) / normalization;
+            }
+        }
+    }
+
+    sdata[tid] = mySum;
+    __syncthreads();
+    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) sdata[tid] += sdata[tid + s];
+        __syncthreads();
+    }
+    if (tid == 0) d_forceBuf[e] = sdata[0];
+}
+
+void gpuComputeForceCoeff(GPUSolverData& gpu,
+                          double chordRef, double AoA_deg,
+                          double& Cl, double& Cd)
+{
+    int nE = gpu.nE;
+    double Vinf2 = gpu.uInf * gpu.uInf + gpu.vInf * gpu.vInf;
+    double norm  = 0.5 * gpu.rhoInf * Vinf2 * chordRef;
+    if (norm < 1e-30) norm = 1.0;
+
+    double AoA_rad = AoA_deg * M_PI / 180.0;
+
+    double* d_buf;
+    cudaMalloc(&d_buf, nE * sizeof(double));
+    cudaMemset(d_buf, 0, nE * sizeof(double));
+
+    int bk   = 32;
+    int smem = bk * sizeof(double);
+    std::vector<double> buf(nE);
+
+    // Lift: force perpendicular to freestream
+    double liftNx =  sin(AoA_rad), liftNy = -cos(AoA_rad);
+    wallForceReductionKernel<<<nE, bk, smem>>>(
+        gpu.d_Ucoeff, gpu.d_faceNx, gpu.d_faceNy, gpu.d_faceJac,
+        gpu.d_elem2face, gpu.d_face_elemL, gpu.d_face_elemR,
+        gpu.d_face_bcType, d_buf,
+        nE, gpu.P1, gpu.nq1d, gpu.nmodes, gpu.nqFace,
+        norm, liftNx, liftNy);
+    cudaMemcpy(buf.data(), d_buf, nE * sizeof(double), cudaMemcpyDeviceToHost);
+    Cl = 0.0;
+    for (int i = 0; i < nE; ++i) Cl += buf[i];
+
+    // Drag: force parallel to freestream
+    cudaMemset(d_buf, 0, nE * sizeof(double));
+    double dragNx = -cos(AoA_rad), dragNy = -sin(AoA_rad);
+    wallForceReductionKernel<<<nE, bk, smem>>>(
+        gpu.d_Ucoeff, gpu.d_faceNx, gpu.d_faceNy, gpu.d_faceJac,
+        gpu.d_elem2face, gpu.d_face_elemL, gpu.d_face_elemR,
+        gpu.d_face_bcType, d_buf,
+        nE, gpu.P1, gpu.nq1d, gpu.nmodes, gpu.nqFace,
+        norm, dragNx, dragNy);
+    cudaMemcpy(buf.data(), d_buf, nE * sizeof(double), cudaMemcpyDeviceToHost);
+    Cd = 0.0;
+    for (int i = 0; i < nE; ++i) Cd += buf[i];
+
+    cudaFree(d_buf);
+}
+

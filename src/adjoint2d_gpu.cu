@@ -1173,6 +1173,7 @@ __global__ void adjointSensorKernel(
     int nE, int P1, int nmodes, int nqVol,
     double s0, double kappa, double smaxRef, double avScale,
     bool capFwdEps,
+    bool skipTransform,
     const int* __restrict__ d_elemIdx)
 {
     int eIdx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -1195,29 +1196,39 @@ __global__ void adjointSensorKernel(
 
     double maxSe = -20.0;
     for (int var = 0; var < NVAR_GPU; ++var) {
-        double c_modal[MAX_P1 * MAX_P1];
-        for (int k = 0; k < P1; ++k)
-            for (int l = 0; l < P1; ++l) {
-                double val = 0.0;
-                for (int ii = 0; ii < P1; ++ii) {
-                    double Tki = ac_NodalToModal[k * P1 + ii];
-                    for (int jj = 0; jj < P1; ++jj)
-                        val += Tki * ac_NodalToModal[l * P1 + jj]
-                             * d_psiCoeff[var * nE * nmodes + e * nmodes + ii * P1 + jj];
-                }
-                c_modal[k * P1 + l] = val;
-            }
-
         int highDegThresh = max(2 * P - 1, P + 1);
         double total_energy = 0.0;
         double high_energy  = 0.0;
-        for (int ii = 0; ii < P1; ++ii)
-            for (int jj = 0; jj < P1; ++jj) {
-                double c = c_modal[ii * P1 + jj];
-                total_energy += c * c;
-                if (ii + jj >= highDegThresh)
-                    high_energy += c * c;
-            }
+
+        if (skipTransform) {
+            for (int ii = 0; ii < P1; ++ii)
+                for (int jj = 0; jj < P1; ++jj) {
+                    double c = d_psiCoeff[var * nE * nmodes + e * nmodes + ii * P1 + jj];
+                    total_energy += c * c;
+                    if (ii + jj >= highDegThresh)
+                        high_energy += c * c;
+                }
+        } else {
+            double c_modal[MAX_P1 * MAX_P1];
+            for (int k = 0; k < P1; ++k)
+                for (int l = 0; l < P1; ++l) {
+                    double val = 0.0;
+                    for (int ii = 0; ii < P1; ++ii) {
+                        double Tki = ac_NodalToModal[k * P1 + ii];
+                        for (int jj = 0; jj < P1; ++jj)
+                            val += Tki * ac_NodalToModal[l * P1 + jj]
+                                 * d_psiCoeff[var * nE * nmodes + e * nmodes + ii * P1 + jj];
+                    }
+                    c_modal[k * P1 + l] = val;
+                }
+            for (int ii = 0; ii < P1; ++ii)
+                for (int jj = 0; jj < P1; ++jj) {
+                    double c = c_modal[ii * P1 + jj];
+                    total_energy += c * c;
+                    if (ii + jj >= highDegThresh)
+                        high_energy += c * c;
+                }
+        }
 
         double se = (total_energy > 1e-30) ? log10(high_energy / total_energy) : -20.0;
         maxSe = fmax(maxSe, se);
@@ -1889,7 +1900,8 @@ void adjointComputeRHS(AdjointGPUData& adj, const GPUSolverData& gpu, bool usePs
             gpu.d_dxidx, gpu.d_dxidy, gpu.d_detadx, gpu.d_detady,
             gpu.d_epsilon, adj.d_adjEpsilon, adj.d_adjSensor,
             nE, P1, nmodes, nqVol,
-            gpu.AVs0, gpu.AVkappa, smaxRef, adjAVscale, capFwdEps, nullptr);
+            gpu.AVs0, gpu.AVkappa, smaxRef, adjAVscale, capFwdEps,
+            adj.modalMode, nullptr);
     };
 
     if (adj.modalMode) {
@@ -1897,12 +1909,9 @@ void adjointComputeRHS(AdjointGPUData& adj, const GPUSolverData& gpu, bool usePs
         // d_psi_in already contains coefficients.
         const double* psiCoeffPtr = d_psi_in;
 
-        // Backward transform: psi coefficients -> quad-point working buffer
-        int blockBT = std::max(64, NVAR_GPU * nqVol);
-        if (blockBT % 32 != 0) blockBT = ((blockBT + 31) / 32) * 32;
-        adjointBackwardTransformKernel<<<nE, blockBT>>>(
-            psiCoeffPtr, adj.d_psi_quad,
-            nE, P1, nq1d, nmodes, nqVol, totalDOF);
+        // Note: backward transform to d_psi_quad is NOT needed here --
+        // no subsequent RHS kernel reads it. It is only needed for
+        // output/checkpointing, which adjointCopyQuadPointsToHost handles.
 
         // Shock sensor (reads coefficients directly)
         launchAVSensor(psiCoeffPtr);
@@ -2271,7 +2280,8 @@ void adjointComputeRHS_group(AdjointGPUData& adj, const GPUSolverData& gpu,
             gpu.d_dxidx, gpu.d_dxidy, gpu.d_detadx, gpu.d_detady,
             gpu.d_epsilon, adj.d_adjEpsilon, adj.d_adjSensor,
             nE, P1, nmodes, nqVol,
-            gpu.AVs0, gpu.AVkappa, smaxRef, adjAVscale, capFwdEps, grp.d_elemIdx);
+            gpu.AVs0, gpu.AVkappa, smaxRef, adjAVscale, capFwdEps,
+            adj.modalMode, grp.d_elemIdx);
     }
 
     // Step 2: Volume integral

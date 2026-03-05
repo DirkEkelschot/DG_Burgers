@@ -54,6 +54,7 @@ struct AdjointGPUData {
 
     double chordRef;
     bool   fullAV;         // use forward AV scale without clamping (modal basis)
+    double maxAVscale;     // CFL-derived cap: P / (2 * CFL * (2P+1))
     double forceNx;
     double forceNy;
 };

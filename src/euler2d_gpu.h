@@ -141,6 +141,11 @@ void gpuRestoreSnapshot(GPUSolverData& gpu);
 void gpuResidualNormPerVarFused(GPUSolverData& gpu, double norms[4]);
 void gpuSyncUcoeff(GPUSolverData& gpu);
 
+// Force coefficients (wall pressure integration on GPU)
+void gpuComputeForceCoeff(GPUSolverData& gpu,
+                          double chordRef, double AoA_deg,
+                          double& Cl, double& Cd);
+
 // Variable-P support
 void gpuAllocateGroup(PGroupGPU& grp, int P, int nEGroup);
 void gpuFreeGroup(PGroupGPU& grp);
