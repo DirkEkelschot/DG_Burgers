@@ -126,6 +126,7 @@ void gpuCopySolutionToHost(GPUSolverData& gpu, double* U_flat);
 void gpuComputeDGRHS(GPUSolverData& gpu, bool useUtmp, double time);
 void gpuRK4Stage(GPUSolverData& gpu, double dt, int stage);
 double gpuComputeCFL(GPUSolverData& gpu, double CFL, int P);
+int gpuCFLDiagnostic(GPUSolverData& gpu, double CFL, int P);
 bool gpuCheckNaN(GPUSolverData& gpu);
 void gpuSetNodalToModal(const double* T, int P1);
 void gpuSetFaceInterp(const double* interpL, const double* interpR, int nq1d);
@@ -145,6 +146,16 @@ void gpuSyncUcoeff(GPUSolverData& gpu);
 void gpuComputeForceCoeff(GPUSolverData& gpu,
                           double chordRef, double AoA_deg,
                           double& Cl, double& Cd);
+
+// Update geometry arrays on GPU (for mesh deformation)
+void gpuUpdateGeometry(GPUSolverData& gpu,
+                       const double* detJ, const double* dxidx, const double* dxidy,
+                       const double* detadx, const double* detady,
+                       const double* faceNx, const double* faceNy, const double* faceJac,
+                       const double* faceXPhys, const double* faceYPhys);
+
+// Update mass matrix inverse on GPU (for mesh deformation)
+void gpuUpdateMinv(GPUSolverData& gpu, const double* Minv);
 
 // Variable-P support
 void gpuAllocateGroup(PGroupGPU& grp, int P, int nEGroup);

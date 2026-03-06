@@ -664,8 +664,8 @@ static void computeForceCoefficients(
     double norm  = 0.5 * rhoInf * Vinf2 * chordRef;
     if (norm < 1e-30) norm = 1.0;
 
-    double liftNx =  std::sin(AoA_rad), liftNy = -std::cos(AoA_rad);
-    double dragNx = -std::cos(AoA_rad), dragNy = -std::sin(AoA_rad);
+    double liftNx = -std::sin(AoA_rad), liftNy =  std::cos(AoA_rad);
+    double dragNx =  std::cos(AoA_rad), dragNy =  std::sin(AoA_rad);
 
     // Project U to modal coefficients
     std::vector<std::vector<double>> Ucoeff(NVAR2D);
@@ -1301,6 +1301,14 @@ static int runVariableP(Inputs2D* inp, Mesh2D& mesh)
         int gs = iter_offset + t_step;
         gpuSnapshotSolution(gpu);
         if (CFL > 0.0) dt = gpuComputeCFL(gpu, CFL, pMax);
+        if (t_step == 0 && CFL > 0.0) {
+            int worstElem = gpuCFLDiagnostic(gpu, CFL, pMax);
+            const auto& enodes = mesh.elements[worstElem];
+            double cx = 0, cy = 0;
+            for (int n : enodes) { cx += mesh.nodes[n][0]; cy += mesh.nodes[n][1]; }
+            cx /= enodes.size(); cy /= enodes.size();
+            printf("  Limiting element centroid: (%.6f, %.6f)\n", cx, cy);
+        }
         if (t_step < 5) std::cout << "Step " << gs << ": dt = " << dt << std::endl;
 
         computeRHS(false, time);
@@ -1737,7 +1745,17 @@ int main(int argc, char* argv[])
             if (CFL > 0.0)
                 dt = gpuComputeCFL(gpu, CFL, P);
 
-            if (t_step < 5 && iter_offset == 0)
+            if (t_step == 0 && CFL > 0.0) {
+                int worstElem = gpuCFLDiagnostic(gpu, CFL, P);
+                const auto& enodes = mesh.elements[worstElem];
+                double cx2 = 0, cy2 = 0;
+                for (int n : enodes) { cx2 += mesh.nodes[n][0]; cy2 += mesh.nodes[n][1]; }
+                cx2 /= enodes.size(); cy2 /= enodes.size();
+                printf("  Limiting element centroid: (%.6f, %.6f)\n", cx2, cy2);
+                fflush(stdout);
+            }
+
+            if (t_step < 5)
                 std::cout << "Step " << globalStep << ": dt = " << dt << std::endl;
 
             gpuComputeDGRHS(gpu, false, time);
@@ -1752,6 +1770,7 @@ int main(int argc, char* argv[])
                         << "," << perVarNorms[2]
                         << "," << perVarNorms[3];
                 if (logForces) {
+                    gpuSyncUcoeff(gpu);
                     double Cl, Cd;
                     gpuComputeForceCoeff(gpu, inp->adjChordRef, inp->AoA, Cl, Cd);
                     csvFile << "," << Cl << "," << Cd;
@@ -1831,11 +1850,12 @@ int main(int argc, char* argv[])
                           << " (time = " << time << ")" << std::endl;
             }
 
-            printProgressBar(t_step + 1, nt);
+            if (t_step >= 5)
+                printProgressBar(t_step + 1, nt);
         }
 
         csvFile.close();
-        std::cout << "Residual history written to residual_history.csv" << std::endl;
+        std::cout << "\nResidual history written to residual_history.csv" << std::endl;
         finalIterCount = lastGlobalStep;
     }
 
@@ -1924,7 +1944,7 @@ int main(int argc, char* argv[])
     // Compute and print lift/drag coefficients (NACA0012)
     // ========================================================================
     if (inp->testcase == "NACA0012" && !nanFound) {
-        gpuComputeDGRHS(gpu, false, time);
+        gpuSyncUcoeff(gpu);
         double Cl, Cd;
         gpuComputeForceCoeff(gpu, inp->adjChordRef, inp->AoA, Cl, Cd);
         std::cout << std::scientific << std::setprecision(10);
@@ -1949,11 +1969,11 @@ int main(int argc, char* argv[])
 
         double forceNx, forceNy;
         if (adjObjective == "Drag") {
-            forceNx = -std::cos(AoA_rad);
-            forceNy = -std::sin(AoA_rad);
+            forceNx =  std::cos(AoA_rad);
+            forceNy =  std::sin(AoA_rad);
         } else {
-            forceNx =  std::sin(AoA_rad);
-            forceNy = -std::cos(AoA_rad);
+            forceNx = -std::sin(AoA_rad);
+            forceNy =  std::cos(AoA_rad);
         }
         std::cout << "Adjoint objective  = " << adjObjective << std::endl;
         std::cout << "Force direction    = (" << forceNx << ", " << forceNy << ")" << std::endl;

@@ -116,7 +116,7 @@ void Mesh2D::readGmsh(const std::string& filename)
               << nElements << " quad elements, "
               << boundaryEdgeTag.size() << " boundary edges" << std::endl;
 
-    mergeCoincidentNodes(1e-10, boundaryEdgeTag);
+    checkForCoincidentNodes(1e-10);
 
     buildFaces();
 
@@ -183,14 +183,12 @@ void Mesh2D::buildFaces()
     std::cout << "Mesh2D: built " << nFaces << " faces" << std::endl;
 }
 
-void Mesh2D::mergeCoincidentNodes(double tol,
-    std::map<std::array<int,2>, int>& boundaryEdgeTag)
+void Mesh2D::checkForCoincidentNodes(double tol) const
 {
     double scale = 1.0 / std::max(tol, 1e-15);
 
     std::map<std::pair<long long, long long>, int> posMap;
-    std::vector<int> nodeMap(nNodes);
-    int nMerged = 0;
+    int nDuplicates = 0;
 
     for (int i = 0; i < nNodes; ++i) {
         long long qx = std::llround(nodes[i][0] * scale);
@@ -199,26 +197,18 @@ void Mesh2D::mergeCoincidentNodes(double tol,
 
         auto it = posMap.find(key);
         if (it != posMap.end()) {
-            nodeMap[i] = it->second;
-            nMerged++;
+            if (nDuplicates == 0)
+                std::cerr << "WARNING: mesh contains coincident nodes "
+                             "(fix the .geo file so Gmsh shares nodes):\n";
+            std::cerr << "  node " << i << " duplicates node " << it->second
+                      << " at (" << nodes[i][0] << ", " << nodes[i][1] << ")\n";
+            nDuplicates++;
         } else {
             posMap[key] = i;
-            nodeMap[i] = i;
         }
     }
 
-    if (nMerged == 0) return;
-
-    for (auto& elem : elements)
-        for (auto& n : elem)
-            n = nodeMap[n];
-
-    std::map<std::array<int,2>, int> newBET;
-    for (auto& [key, tag] : boundaryEdgeTag) {
-        auto nk = sortedEdge(nodeMap[key[0]], nodeMap[key[1]]);
-        newBET[nk] = tag;
-    }
-    boundaryEdgeTag = std::move(newBET);
-
-    std::cout << "Mesh2D: merged " << nMerged << " coincident nodes" << std::endl;
+    if (nDuplicates > 0)
+        throw std::runtime_error("Mesh has " + std::to_string(nDuplicates)
+            + " coincident nodes. Regenerate the mesh with shared geometry.");
 }

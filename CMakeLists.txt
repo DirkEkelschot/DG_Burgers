@@ -79,6 +79,85 @@ set_property(TARGET app2d_adjoint PROPERTY CXX_STANDARD 17)
 set_property(TARGET app2d_adjoint PROPERTY CUDA_STANDARD 17)
 set_target_properties(app2d_adjoint PROPERTIES CUDA_ARCHITECTURES "90")
 
+# 2D Euler Discrete Adjoint Solver
+add_executable(app2d_discrete_adjoint
+    src/Polylib.cpp
+    src/basis.cpp
+    src/basis_poly.cpp
+    src/basis_functions.cpp
+    src/io.cpp
+    src/tinyxml.cpp
+    src/tinyxmlerror.cpp
+    src/tinyxmlparser.cpp
+    src/tinystr.cpp
+    src/mesh2d.cpp
+    src/geom2d.cpp
+    src/euler2d.cpp
+    src/euler2d_gpu.cu
+    src/discrete_adjoint2d_gpu.cu
+    src/p_adapt.cpp
+    2D-Euler-discrete-adjoint-app.cpp
+)
+if(DEFAULT_BLAS_ROOT AND EXISTS "${DEFAULT_BLAS_ROOT}/include")
+    target_include_directories(app2d_discrete_adjoint PRIVATE "${DEFAULT_BLAS_ROOT}/include")
+endif()
+target_link_libraries(app2d_discrete_adjoint ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES})
+set_property(TARGET app2d_discrete_adjoint PROPERTY CXX_STANDARD 17)
+set_property(TARGET app2d_discrete_adjoint PROPERTY CUDA_STANDARD 17)
+set_target_properties(app2d_discrete_adjoint PROPERTIES CUDA_ARCHITECTURES "90")
+
+# Mesh deformation tool (CPU only, no CUDA)
+add_executable(deform_mesh
+    src/Polylib.cpp
+    src/basis.cpp
+    src/basis_poly.cpp
+    src/basis_functions.cpp
+    src/io.cpp
+    src/tinyxml.cpp
+    src/tinyxmlerror.cpp
+    src/tinyxmlparser.cpp
+    src/tinystr.cpp
+    src/mesh2d.cpp
+    src/geom2d.cpp
+    src/hicks_henne.cpp
+    src/mesh_deform.cpp
+    deform-mesh-app.cpp
+)
+if(DEFAULT_BLAS_ROOT AND EXISTS "${DEFAULT_BLAS_ROOT}/include")
+    target_include_directories(deform_mesh PRIVATE "${DEFAULT_BLAS_ROOT}/include")
+endif()
+target_link_libraries(deform_mesh ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES})
+set_property(TARGET deform_mesh PROPERTY CXX_STANDARD 17)
+
+# Shape gradient computation (CUDA)
+add_executable(shape_grad
+    src/Polylib.cpp
+    src/basis.cpp
+    src/basis_poly.cpp
+    src/basis_functions.cpp
+    src/io.cpp
+    src/tinyxml.cpp
+    src/tinyxmlerror.cpp
+    src/tinyxmlparser.cpp
+    src/tinystr.cpp
+    src/mesh2d.cpp
+    src/geom2d.cpp
+    src/euler2d.cpp
+    src/euler2d_gpu.cu
+    src/discrete_adjoint2d_gpu.cu
+    src/hicks_henne.cpp
+    src/mesh_deform.cpp
+    src/shape_sensitivity.cu
+    shape-gradient-app.cpp
+)
+if(DEFAULT_BLAS_ROOT AND EXISTS "${DEFAULT_BLAS_ROOT}/include")
+    target_include_directories(shape_grad PRIVATE "${DEFAULT_BLAS_ROOT}/include")
+endif()
+target_link_libraries(shape_grad ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES})
+set_property(TARGET shape_grad PROPERTY CXX_STANDARD 17)
+set_property(TARGET shape_grad PROPERTY CUDA_STANDARD 17)
+set_target_properties(shape_grad PROPERTIES CUDA_ARCHITECTURES "90")
+
 # Truncation error utility (CPU only, no CUDA)
 add_executable(truncerr
     src/Polylib.cpp

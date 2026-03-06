@@ -32,8 +32,7 @@ struct Mesh2D {
 
     void readGmsh(const std::string& filename);
     void buildFaces();
-    void mergeCoincidentNodes(double tol,
-        std::map<std::array<int,2>, int>& boundaryEdgeTag);
+    void checkForCoincidentNodes(double tol) const;
 };
 
 #endif

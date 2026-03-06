@@ -55,6 +55,12 @@ struct Inputs2D {
     int    pMax             = 0;
     std::string errorIndicatorFile;
     std::vector<double> pAdaptThresholds;
+
+    // Shape optimization
+    int    optNBumpsUpper   = 10;
+    int    optNBumpsLower   = 10;
+    double optFDEpsilon     = 1e-7;
+    std::string baseMeshFile;
 };
 
 void ParseEquals(const std::string &line, std::string &lhs,

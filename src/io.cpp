@@ -257,6 +257,11 @@ Inputs2D* ReadXmlFile2D(const char* filename)
             inp->pAdaptThresholds.push_back(std::stod(token));
     }
 
+    if (param_map.count("OptNBumpsUpper"))   inp->optNBumpsUpper = std::stoi(param_map["OptNBumpsUpper"]);
+    if (param_map.count("OptNBumpsLower"))   inp->optNBumpsLower = std::stoi(param_map["OptNBumpsLower"]);
+    if (param_map.count("OptFDEpsilon"))     inp->optFDEpsilon   = std::stod(param_map["OptFDEpsilon"]);
+    if (param_map.count("BaseMeshFile"))     inp->baseMeshFile   = param_map["BaseMeshFile"];
+
     if (inp->nquad == 0)
         inp->nquad = inp->porder + 1;
 
@@ -299,6 +304,13 @@ Inputs2D* ReadXmlFile2D(const char* filename)
             for (double t : inp->pAdaptThresholds) std::cout << " " << t;
             std::cout << std::endl;
         }
+    }
+    if (inp->optNBumpsUpper > 0 || inp->optNBumpsLower > 0) {
+        std::cout << "OptNBumpsUpper  = " << inp->optNBumpsUpper << std::endl;
+        std::cout << "OptNBumpsLower  = " << inp->optNBumpsLower << std::endl;
+        std::cout << "OptFDEpsilon    = " << inp->optFDEpsilon   << std::endl;
+        if (!inp->baseMeshFile.empty())
+            std::cout << "BaseMeshFile    = " << inp->baseMeshFile << std::endl;
     }
     std::cout << "===================================================" << std::endl;
 

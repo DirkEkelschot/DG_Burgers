@@ -3,6 +3,8 @@
 #include <cstdio>
 #include <cstring>
 #include <cfloat>
+#include <algorithm>
+#include <vector>
 
 #define CUDA_CHECK(call) do { \
     cudaError_t err = call; \
@@ -994,11 +996,12 @@ __global__ void cflKernel(
         double gradEta = sqrt(d_detadx[i]*d_detadx[i] + d_detady[i]*d_detady[i]);
         double h = 1.0 / fmax(gradXi, gradEta);
 
-        double rho  = d_U[0 * totalDOF + i];
+        double rho  = fmax(d_U[0 * totalDOF + i], 1e-10);
         double u    = d_U[1 * totalDOF + i] / rho;
         double v    = d_U[2 * totalDOF + i] / rho;
-        double p    = pressure_d(d_U[0*totalDOF+i], d_U[1*totalDOF+i],
+        double p    = pressure_d(rho, d_U[1*totalDOF+i],
                                  d_U[2*totalDOF+i], d_U[3*totalDOF+i]);
+        p = fmax(p, 1e-10);
         double c    = soundSpeed_d(rho, p);
         double smax = sqrt(u*u + v*v) + c;
         double dt_local = CFL * h / (smax * (2.0 * P + 1.0));
@@ -1016,6 +1019,47 @@ __global__ void cflKernel(
 
     if (tid == 0)
         atomicMinDouble(d_dtMin, sdata[0]);
+}
+
+// ============================================================================
+// Kernel 5b: Per-element minimum dt (diagnostic)
+// ============================================================================
+
+__global__ void cflPerElemKernel(
+    const double* __restrict__ d_U,
+    const double* __restrict__ d_dxidx,
+    const double* __restrict__ d_dxidy,
+    const double* __restrict__ d_detadx,
+    const double* __restrict__ d_detady,
+    double* __restrict__ d_dtPerElem,
+    double* __restrict__ d_hPerElem,
+    int nE, int nqVol, int totalDOF, double CFL, int P)
+{
+    int e = blockIdx.x * blockDim.x + threadIdx.x;
+    if (e >= nE) return;
+
+    double minDt = 1e20;
+    double minH  = 1e20;
+    for (int q = 0; q < nqVol; q++) {
+        int i = e * nqVol + q;
+        double gradXi  = sqrt(d_dxidx[i]*d_dxidx[i] + d_dxidy[i]*d_dxidy[i]);
+        double gradEta = sqrt(d_detadx[i]*d_detadx[i] + d_detady[i]*d_detady[i]);
+        double h = 1.0 / fmax(gradXi, gradEta);
+
+        double rho = fmax(d_U[0 * totalDOF + i], 1e-10);
+        double u   = d_U[1 * totalDOF + i] / rho;
+        double v   = d_U[2 * totalDOF + i] / rho;
+        double p   = pressure_d(rho, d_U[1*totalDOF+i],
+                                d_U[2*totalDOF+i], d_U[3*totalDOF+i]);
+        p = fmax(p, 1e-10);
+        double c    = soundSpeed_d(rho, p);
+        double smax = sqrt(u*u + v*v) + c;
+        double dt_local = CFL * h / (smax * (2.0 * P + 1.0));
+
+        if (dt_local < minDt) { minDt = dt_local; minH = h; }
+    }
+    d_dtPerElem[e] = minDt;
+    d_hPerElem[e]  = minH;
 }
 
 // ============================================================================
@@ -1241,6 +1285,42 @@ void gpuCopyStaticData(
 }
 
 // ============================================================================
+// Host wrapper: re-upload geometry arrays after mesh deformation
+// ============================================================================
+
+void gpuUpdateGeometry(GPUSolverData& gpu,
+                       const double* detJ, const double* dxidx, const double* dxidy,
+                       const double* detadx, const double* detady,
+                       const double* faceNx, const double* faceNy, const double* faceJac,
+                       const double* faceXPhys, const double* faceYPhys)
+{
+    int nE = gpu.nE, nF = gpu.nF, nq1d = gpu.nq1d;
+    int nqVol = gpu.nqVol;
+
+    CUDA_CHECK(cudaMemcpy(gpu.d_detJ,   detJ,   nE*nqVol*sizeof(double), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(gpu.d_dxidx,  dxidx,  nE*nqVol*sizeof(double), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(gpu.d_dxidy,  dxidy,  nE*nqVol*sizeof(double), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(gpu.d_detadx, detadx, nE*nqVol*sizeof(double), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(gpu.d_detady, detady, nE*nqVol*sizeof(double), cudaMemcpyHostToDevice));
+
+    CUDA_CHECK(cudaMemcpy(gpu.d_faceNx,    faceNx,    nF*nq1d*sizeof(double), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(gpu.d_faceNy,    faceNy,    nF*nq1d*sizeof(double), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(gpu.d_faceJac,   faceJac,   nF*nq1d*sizeof(double), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(gpu.d_faceXPhys, faceXPhys, nF*nq1d*sizeof(double), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(gpu.d_faceYPhys, faceYPhys, nF*nq1d*sizeof(double), cudaMemcpyHostToDevice));
+}
+
+// ============================================================================
+// Host wrapper: re-upload mass matrix inverse after mesh deformation
+// ============================================================================
+
+void gpuUpdateMinv(GPUSolverData& gpu, const double* Minv)
+{
+    int nE = gpu.nE, nmodes = gpu.nmodes;
+    CUDA_CHECK(cudaMemcpy(gpu.d_Minv, Minv, nE*nmodes*nmodes*sizeof(double), cudaMemcpyHostToDevice));
+}
+
+// ============================================================================
 // Host wrapper: upload face interpolation weights for Lagrange extrapolation
 // ============================================================================
 
@@ -1463,12 +1543,32 @@ void gpuRK4Stage(GPUSolverData& gpu, double dt, int stage)
         gpu.d_k1, gpu.d_k2, gpu.d_k3,
         dt, stage, N);
 
-    if (!gpu.modalMode) {
-        // Pointwise positivity enforcement (only for nodal/quad-point storage)
+    double rhoMin = 1e-6, pMin = 1e-6;
+    double* d_target = (stage < 4) ? gpu.d_Utmp : gpu.d_U;
+
+    if (gpu.modalMode) {
+        int nE = gpu.nE, P1 = gpu.P1, nq1d = gpu.nq1d;
+        int nmodes = gpu.nmodes, nqVol = gpu.nqVol;
+
+        int blockBT = max(64, NVAR_GPU * nqVol);
+        if (blockBT % 32 != 0) blockBT = ((blockBT + 31) / 32) * 32;
+        backwardTransformKernel<<<nE, blockBT>>>(
+            d_target, gpu.d_U_quad,
+            nE, P1, nq1d, nmodes, nqVol, gpu.totalDOF);
+
         int bk = 256;
         int gd = (gpu.totalDOF + bk - 1) / bk;
-        double rhoMin = 1e-6, pMin = 1e-6;
-        double* d_target = (stage < 4) ? gpu.d_Utmp : gpu.d_U;
+        positivityKernel<<<gd, bk>>>(gpu.d_U_quad, gpu.totalDOF, rhoMin, pMin);
+
+        int blockFT = max(64, NVAR_GPU * nmodes);
+        if (blockFT % 32 != 0) blockFT = ((blockFT + 31) / 32) * 32;
+        int smem = NVAR_GPU * nmodes * sizeof(double);
+        forwardTransformKernel<<<nE, blockFT, smem>>>(
+            gpu.d_U_quad, d_target, gpu.d_detJ, gpu.d_Minv,
+            nE, P1, nq1d, nmodes, nqVol, gpu.totalDOF, nullptr);
+    } else {
+        int bk = 256;
+        int gd = (gpu.totalDOF + bk - 1) / bk;
         positivityKernel<<<gd, bk>>>(d_target, gpu.totalDOF, rhoMin, pMin);
     }
 }
@@ -1508,6 +1608,63 @@ double gpuComputeCFL(GPUSolverData& gpu, double CFL, int P)
     double dtMin;
     CUDA_CHECK(cudaMemcpy(&dtMin, gpu.d_dtMin, sizeof(double), cudaMemcpyDeviceToHost));
     return dtMin;
+}
+
+// ============================================================================
+// Host wrapper: CFL diagnostic (find limiting element)
+// ============================================================================
+
+int gpuCFLDiagnostic(GPUSolverData& gpu, double CFL, int P)
+{
+    const double* d_Upts;
+    if (gpu.modalMode) {
+        int blockBT = max(64, NVAR_GPU * gpu.nqVol);
+        if (blockBT % 32 != 0) blockBT = ((blockBT + 31) / 32) * 32;
+        backwardTransformKernel<<<gpu.nE, blockBT>>>(
+            gpu.d_U, gpu.d_U_quad,
+            gpu.nE, gpu.P1, gpu.nq1d, gpu.nmodes,
+            gpu.nqVol, gpu.totalDOF);
+        d_Upts = gpu.d_U_quad;
+    } else {
+        d_Upts = gpu.d_U;
+    }
+
+    double *d_dtPerElem, *d_hPerElem;
+    CUDA_CHECK(cudaMalloc(&d_dtPerElem, gpu.nE * sizeof(double)));
+    CUDA_CHECK(cudaMalloc(&d_hPerElem,  gpu.nE * sizeof(double)));
+
+    int blk = 256;
+    int grd = (gpu.nE + blk - 1) / blk;
+    cflPerElemKernel<<<grd, blk>>>(
+        d_Upts, gpu.d_dxidx, gpu.d_dxidy, gpu.d_detadx, gpu.d_detady,
+        d_dtPerElem, d_hPerElem,
+        gpu.nE, gpu.nqVol, gpu.totalDOF, CFL, P);
+
+    std::vector<double> h_dt(gpu.nE), h_h(gpu.nE);
+    CUDA_CHECK(cudaMemcpy(h_dt.data(), d_dtPerElem, gpu.nE * sizeof(double), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(h_h.data(),  d_hPerElem,  gpu.nE * sizeof(double), cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaFree(d_dtPerElem));
+    CUDA_CHECK(cudaFree(d_hPerElem));
+
+    int minIdx = 0;
+    for (int e = 1; e < gpu.nE; e++)
+        if (h_dt[e] < h_dt[minIdx]) minIdx = e;
+
+    printf("=== CFL Diagnostic ===\n");
+    printf("  Limiting element: %d  (of %d)\n", minIdx, gpu.nE);
+    printf("  dt_min = %.6e   h_min = %.6e\n", h_dt[minIdx], h_h[minIdx]);
+
+    // Show the 10 worst elements
+    std::vector<int> idx(gpu.nE);
+    for (int i = 0; i < gpu.nE; i++) idx[i] = i;
+    std::sort(idx.begin(), idx.end(), [&](int a, int b){ return h_dt[a] < h_dt[b]; });
+    printf("  Top-10 CFL-limiting elements:\n");
+    printf("  %8s  %14s  %14s\n", "elem", "dt", "h");
+    for (int k = 0; k < std::min(10, gpu.nE); k++)
+        printf("  %8d  %14.6e  %14.6e\n", idx[k], h_dt[idx[k]], h_h[idx[k]]);
+    printf("======================\n");
+    fflush(stdout);
+    return minIdx;
 }
 
 // ============================================================================
@@ -1806,7 +1963,7 @@ void gpuComputeForceCoeff(GPUSolverData& gpu,
     std::vector<double> buf(nE);
 
     // Lift: force perpendicular to freestream
-    double liftNx =  sin(AoA_rad), liftNy = -cos(AoA_rad);
+    double liftNx = -sin(AoA_rad), liftNy = cos(AoA_rad);
     wallForceReductionKernel<<<nE, bk, smem>>>(
         gpu.d_Ucoeff, gpu.d_faceNx, gpu.d_faceNy, gpu.d_faceJac,
         gpu.d_elem2face, gpu.d_face_elemL, gpu.d_face_elemR,
@@ -1819,7 +1976,7 @@ void gpuComputeForceCoeff(GPUSolverData& gpu,
 
     // Drag: force parallel to freestream
     cudaMemset(d_buf, 0, nE * sizeof(double));
-    double dragNx = -cos(AoA_rad), dragNy = -sin(AoA_rad);
+    double dragNx = cos(AoA_rad), dragNy = sin(AoA_rad);
     wallForceReductionKernel<<<nE, bk, smem>>>(
         gpu.d_Ucoeff, gpu.d_faceNx, gpu.d_faceNy, gpu.d_faceJac,
         gpu.d_elem2face, gpu.d_face_elemL, gpu.d_face_elemR,

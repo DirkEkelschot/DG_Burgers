@@ -990,9 +990,9 @@ static int runVariablePAdjoint(Inputs2D* inp, Mesh2D& mesh)
     std::string adjObjective = inp->adjObjective;
     double forceNx, forceNy;
     if (adjObjective == "Drag") {
-        forceNx = -std::cos(AoA_rad); forceNy = -std::sin(AoA_rad);
+        forceNx =  std::cos(AoA_rad); forceNy =  std::sin(AoA_rad);
     } else {
-        forceNx = std::sin(AoA_rad); forceNy = -std::cos(AoA_rad);
+        forceNx = -std::sin(AoA_rad); forceNy =  std::cos(AoA_rad);
     }
 
     AdjointGPUData adj;
@@ -1342,11 +1342,11 @@ int main(int argc, char* argv[])
     double AoA_rad = inp->AoA * M_PI / 180.0;
     double forceNx, forceNy;
     if (adjObjective == "Drag") {
-        forceNx = -std::cos(AoA_rad);
-        forceNy = -std::sin(AoA_rad);
+        forceNx =  std::cos(AoA_rad);
+        forceNy =  std::sin(AoA_rad);
     } else {
-        forceNx =  std::sin(AoA_rad);
-        forceNy = -std::cos(AoA_rad);
+        forceNx = -std::sin(AoA_rad);
+        forceNy =  std::cos(AoA_rad);
     }
     std::cout << "Adjoint objective  = " << adjObjective << std::endl;
     std::cout << "Force direction    = (" << forceNx << ", " << forceNy << ")" << std::endl;
