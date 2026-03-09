@@ -55,6 +55,15 @@ void discreteAdjointComputeObjectiveGradient(DiscreteAdjointGPUData& da,
                                              double chordRef,
                                              double forceNx, double forceNy);
 
+double discreteAdjointComputeLiftOverDrag(DiscreteAdjointGPUData& da,
+                                          const GPUSolverData& gpu,
+                                          double chordRef, double AoA_rad,
+                                          double& Cl_out, double& Cd_out);
+
+void discreteAdjointComputeLiftOverDragGradient(DiscreteAdjointGPUData& da,
+                                                const GPUSolverData& gpu,
+                                                double chordRef, double AoA_rad);
+
 void discreteAdjointComputeRHS(DiscreteAdjointGPUData& da,
                                const GPUSolverData& gpu,
                                bool usePsiTmp);

@@ -246,11 +246,11 @@ int main(int argc, char* argv[])
 
     // Force direction
     double AoA_rad = inp->AoA * M_PI / 180.0;
-    double forceNx, forceNy;
+    double forceNx = 0.0, forceNy = 0.0;
     if (adjObjective == "Drag") {
         forceNx =  std::cos(AoA_rad);
         forceNy =  std::sin(AoA_rad);
-    } else {
+    } else if (adjObjective == "Lift") {
         forceNx = -std::sin(AoA_rad);
         forceNy =  std::cos(AoA_rad);
     }
@@ -418,9 +418,17 @@ int main(int argc, char* argv[])
     discreteAdjointSetBasisData(Bmat_flat.data(), Dmat_flat.data(),
                                 blr_flat.data(), wq.data(), P1, nq1d);
 
-    double baselineJ = discreteAdjointComputeForceCoeff(da, gpu, chordRef, forceNx, forceNy);
+    double baselineJ;
     std::cout << std::scientific << std::setprecision(10);
-    std::cout << "Objective (" << adjObjective << ") = " << baselineJ << std::endl;
+    if (adjObjective == "LiftOverDrag") {
+        double Cl, Cd;
+        baselineJ = discreteAdjointComputeLiftOverDrag(da, gpu, chordRef, AoA_rad, Cl, Cd);
+        std::cout << "Objective (L/D) = " << baselineJ
+                  << "  (Cl=" << Cl << ", Cd=" << Cd << ")" << std::endl;
+    } else {
+        baselineJ = discreteAdjointComputeForceCoeff(da, gpu, chordRef, forceNx, forceNy);
+        std::cout << "Objective (" << adjObjective << ") = " << baselineJ << std::endl;
+    }
 
     std::string adjRestartPath = inp->adjRestartFile.empty()
                                ? "discrete_adjoint_restart.bin"
@@ -448,12 +456,22 @@ int main(int argc, char* argv[])
     // But the GPU solver is initialized with the deformed mesh's geometry.
     // The sensitivity routine will perturb around the current alpha and recompute.
 
-    auto gradient = computeShapeGradient(
-        gpu, da, baseMesh, baselineNodes, geom,
-        hh, alpha, wallNodes, deformer,
-        xiVol, etaVol, nqVol, zq, nq1d,
-        chordRef, forceNx, forceNy,
-        fdEpsilon, baselineJ);
+    std::vector<double> gradient;
+    if (adjObjective == "LiftOverDrag") {
+        gradient = computeShapeGradientLoverD(
+            gpu, da, baseMesh, baselineNodes, geom,
+            hh, alpha, wallNodes, deformer,
+            xiVol, etaVol, nqVol, zq, nq1d,
+            chordRef, AoA_rad,
+            fdEpsilon, baselineJ);
+    } else {
+        gradient = computeShapeGradient(
+            gpu, da, baseMesh, baselineNodes, geom,
+            hh, alpha, wallNodes, deformer,
+            xiVol, etaVol, nqVol, zq, nq1d,
+            chordRef, forceNx, forceNy,
+            fdEpsilon, baselineJ);
+    }
 
     // Write gradient
     {
@@ -545,7 +563,13 @@ int main(int argc, char* argv[])
             gpuComputeDGRHS(gpu, false, 0.0);
             gpuSyncUcoeff(gpu);
 
-            double J_pert = discreteAdjointComputeForceCoeff(da, gpu, chordRef, forceNx, forceNy);
+            double J_pert;
+            if (adjObjective == "LiftOverDrag") {
+                double Cl_p, Cd_p;
+                J_pert = discreteAdjointComputeLiftOverDrag(da, gpu, chordRef, AoA_rad, Cl_p, Cd_p);
+            } else {
+                J_pert = discreteAdjointComputeForceCoeff(da, gpu, chordRef, forceNx, forceNy);
+            }
             double fd_grad = (J_pert - baselineJ) / fdEpsilon;
 
             std::cout << "  alpha_" << k

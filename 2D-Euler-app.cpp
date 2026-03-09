@@ -18,6 +18,7 @@
 #include "src/euler2d.h"
 #include "src/euler2d_gpu.h"
 #include "src/adjoint2d_gpu.h"
+#include "src/implicit_solver.h"
 #include "src/p_adapt.h"
 
 using namespace polylib;
@@ -1299,15 +1300,16 @@ static int runVariableP(Inputs2D* inp, Mesh2D& mesh)
 
     for (int t_step = 0; t_step < nt && !nanFound; ++t_step) {
         int gs = iter_offset + t_step;
+
+        if (inp->AVfreezeAfter > 0 && gs >= inp->AVfreezeAfter && !gpu.freezeAV) {
+            gpu.freezeAV = true;
+            std::cout << "AV frozen at step " << gs << std::endl;
+        }
+
         gpuSnapshotSolution(gpu);
         if (CFL > 0.0) dt = gpuComputeCFL(gpu, CFL, pMax);
         if (t_step == 0 && CFL > 0.0) {
-            int worstElem = gpuCFLDiagnostic(gpu, CFL, pMax);
-            const auto& enodes = mesh.elements[worstElem];
-            double cx = 0, cy = 0;
-            for (int n : enodes) { cx += mesh.nodes[n][0]; cy += mesh.nodes[n][1]; }
-            cx /= enodes.size(); cy /= enodes.size();
-            printf("  Limiting element centroid: (%.6f, %.6f)\n", cx, cy);
+            gpuCFLDiagnostic(gpu, CFL, pMax, mesh);
         }
         if (t_step < 5) std::cout << "Step " << gs << ": dt = " << dt << std::endl;
 
@@ -1527,7 +1529,8 @@ int main(int argc, char* argv[])
     double time_restart = 0.0;
     int iter_offset = 0;
     if (!inp->restartfile.empty()) {
-        if (!readRestart(inp->restartfile, U, nE, nqVol, time_restart, iter_offset)) {
+        if (!readRestartInterp(inp->restartfile, U, nE, nqVol, nq1d,
+                               time_restart, iter_offset)) {
             std::cout << "Restart failed, exiting." << std::endl;
             return 1;
         }
@@ -1709,12 +1712,292 @@ int main(int argc, char* argv[])
     // ========================================================================
     // Time integration on GPU
     // ========================================================================
+    bool useImplicit = (inp->timescheme == "BackwardEuler");
+    if (useImplicit) {
+        gpuImplicitAllocate(gpu, inp->gmresRestart);
+        gpu.useBlockJacobi = (inp->preconditioner == "BlockJacobi" ||
+                              inp->preconditioner == "pMultigrid");
+
+        std::vector<std::array<int,2>> faceElems(mesh.nFaces);
+        for (int f = 0; f < mesh.nFaces; ++f)
+            faceElems[f] = {mesh.faces[f].elemL, mesh.faces[f].elemR};
+        gpuBuildElementColoring(gpu, faceElems);
+
+        if (inp->preconditioner == "pMultigrid" && P >= 2) {
+            printf("Setting up p-multigrid preconditioner...\n"); fflush(stdout);
+
+            // Build coarse levels: P -> P/2 -> ... -> 0
+            std::vector<int> coarsePs;
+            { int pc = std::max(P / 2, 1); coarsePs.push_back(pc); }
+            coarsePs.push_back(0);
+
+            gpu.pmg_nLevels = (int)coarsePs.size();
+            gpu.pmg_levels.resize(gpu.pmg_nLevels);
+
+            for (int lev = 0; lev < gpu.pmg_nLevels; ++lev) {
+                int Pc = coarsePs[lev];
+                pMGLevel& L = gpu.pmg_levels[lev];
+                pmgAllocateLevel(L, Pc, nE, gpu.cublasH);
+
+                // Set up PGroupGPU for all elements at this coarse P
+                gpuAllocateGroup(L.group, Pc, nE);
+                std::vector<int> allElems(nE);
+                for (int e = 0; e < nE; ++e) allElems[e] = e;
+                gpuUploadGroupElemIdx(L.group, allElems.data());
+
+                // Build coarse basis at fine quadrature points
+                int P1_c = Pc + 1;
+                int nm_c = P1_c * P1_c;
+                auto basisC = BasisPoly::Create(inp->btype, Pc, inp->ptype, zq, wq);
+                basisC->ConstructBasis();
+                auto Bc = basisC->GetB();
+                auto Dc = basisC->GetD();
+                auto blrc = basisC->GetLeftRightBasisValues();
+
+                L.group.h_Bmat.resize(P1_c * nq1d);
+                L.group.h_Dmat.resize(P1_c * nq1d);
+                L.group.h_blr.resize(P1_c * 2);
+                for (int i = 0; i < P1_c; ++i) {
+                    for (int q = 0; q < nq1d; ++q) {
+                        L.group.h_Bmat[i * nq1d + q] = Bc[i][q];
+                        L.group.h_Dmat[i * nq1d + q] = Dc[i][q];
+                    }
+                    L.group.h_blr[i * 2]     = blrc[i][0];
+                    L.group.h_blr[i * 2 + 1] = blrc[i][1];
+                }
+                L.group.h_wq.assign(wq.begin(), wq.end());
+                L.group.h_faceInterp.resize(2 * nq1d);
+                for (int k = 0; k < nq1d; ++k) {
+                    L.group.h_faceInterp[k]        = polylib::hgj(k, -1.0, zq.data(), nq1d, 0.0, 0.0);
+                    L.group.h_faceInterp[nq1d + k] = polylib::hgj(k,  1.0, zq.data(), nq1d, 0.0, 0.0);
+                }
+
+                // Compute coarse mass matrix inverse
+                int blockSz = nm_c * nm_c;
+                std::vector<double> massLU_c(nE * blockSz, 0.0);
+                std::vector<int> massPiv_c(nE * nm_c, 0);
+                for (int e_idx = 0; e_idx < nE; ++e_idx) {
+                    double* M = &massLU_c[e_idx * blockSz];
+                    for (int qx = 0; qx < nq1d; ++qx)
+                        for (int qe = 0; qe < nq1d; ++qe) {
+                            int qIdx = e_idx * nqVol + qx * nq1d + qe;
+                            double w_val = wq[qx] * wq[qe] * geom.detJ[qIdx];
+                            for (int i1 = 0; i1 < P1_c; ++i1)
+                                for (int j1 = 0; j1 < P1_c; ++j1) {
+                                    int row = i1 * P1_c + j1;
+                                    double phiR = Bc[i1][qx] * Bc[j1][qe];
+                                    for (int i2 = 0; i2 < P1_c; ++i2)
+                                        for (int j2 = 0; j2 < P1_c; ++j2) {
+                                            int col = i2 * P1_c + j2;
+                                            M[row * nm_c + col] += w_val * phiR * Bc[i2][qx] * Bc[j2][qe];
+                                        }
+                                }
+                        }
+                    int INFO;
+                    dgetrf_(&nm_c, &nm_c, M, &nm_c, &massPiv_c[e_idx * nm_c], &INFO);
+                }
+                std::vector<double> Minv_c(nE * blockSz, 0.0);
+                for (int e_idx = 0; e_idx < nE; ++e_idx) {
+                    double* Mb = &Minv_c[e_idx * blockSz];
+                    for (int i = 0; i < nm_c; ++i) Mb[i * nm_c + i] = 1.0;
+                    std::vector<double> LUc(&massLU_c[e_idx * blockSz],
+                                            &massLU_c[(e_idx+1) * blockSz]);
+                    std::vector<int> pc(&massPiv_c[e_idx * nm_c],
+                                        &massPiv_c[(e_idx+1) * nm_c]);
+                    unsigned char TR = 'N';
+                    int N_blas = nm_c, NR = nm_c, LA = nm_c, LB = nm_c, INFO;
+                    dgetrs_(&TR, &N_blas, &NR, LUc.data(), &LA, pc.data(), Mb, &LB, &INFO);
+                }
+                gpuUploadGroupMinv(L.group, Minv_c.data());
+            }
+
+            // Store fine-level basis for restoring constant memory after coarse ops
+            {
+                int P1 = inp->porder + 1;
+                gpu.fineBasisGroup.P = inp->porder;
+                gpu.fineBasisGroup.P1 = P1;
+                gpu.fineBasisGroup.nmodes = P1 * P1;
+                gpu.fineBasisGroup.h_Bmat.resize(P1 * nq1d);
+                gpu.fineBasisGroup.h_Dmat.resize(P1 * nq1d);
+                gpu.fineBasisGroup.h_blr.resize(P1 * 2);
+                for (int i = 0; i < P1; ++i) {
+                    for (int q = 0; q < nq1d; ++q) {
+                        gpu.fineBasisGroup.h_Bmat[i * nq1d + q] = Bmat[i][q];
+                        gpu.fineBasisGroup.h_Dmat[i * nq1d + q] = Dmat[i][q];
+                    }
+                    gpu.fineBasisGroup.h_blr[i * 2]     = blr[i][0];
+                    gpu.fineBasisGroup.h_blr[i * 2 + 1] = blr[i][1];
+                }
+                gpu.fineBasisGroup.h_wq.assign(wq.begin(), wq.end());
+                gpu.fineBasisGroup.h_faceInterp.resize(2 * nq1d);
+                for (int k = 0; k < nq1d; ++k) {
+                    gpu.fineBasisGroup.h_faceInterp[k]        =
+                        polylib::hgj(k, -1.0, zq.data(), nq1d, 0.0, 0.0);
+                    gpu.fineBasisGroup.h_faceInterp[nq1d + k] =
+                        polylib::hgj(k,  1.0, zq.data(), nq1d, 0.0, 0.0);
+                }
+            }
+
+            printf("p-Multigrid: %d coarse levels (", gpu.pmg_nLevels);
+            for (int lev = 0; lev < gpu.pmg_nLevels; ++lev)
+                printf("P=%d%s", gpu.pmg_levels[lev].P,
+                       lev < gpu.pmg_nLevels - 1 ? ", " : "");
+            printf(")\n");
+            fflush(stdout);
+        }
+    }
+
     double time = time_restart;
     bool nanFound = false;
     int finalIterCount = iter_offset;
     auto tStart = std::chrono::high_resolution_clock::now();
 
-    {
+    if (useImplicit) {
+        // ==================================================================
+        // Implicit backward Euler with Newton-Krylov (JFNK)
+        // ==================================================================
+        const int logInterval = 1;
+        const int timerInterval = 10;
+
+        bool logForces = (inp->testcase == "NACA0012");
+        bool converged = false;
+
+        std::ofstream csvFile;
+        if (iter_offset > 0) {
+            csvFile.open("residual_history.csv", std::ios::app);
+        } else {
+            csvFile.open("residual_history.csv");
+            csvFile << "iter,rho,rhou,rhov,rhoE,CFL,newtonIters";
+            if (logForces) csvFile << ",Cl,Cd";
+            csvFile << "\n";
+        }
+
+        double CFL_impl = inp->implCFLStart;
+        auto tBatch = std::chrono::high_resolution_clock::now();
+
+        for (int t_step = 0; t_step < nt && !nanFound && !converged; ++t_step)
+        {
+            int globalStep = iter_offset + t_step;
+
+            gpuSnapshotSolution(gpu);
+
+            dt = gpuComputeCFL(gpu, CFL_impl, P);
+
+            printf("Implicit step %d: CFL = %.1f, dt = %.6e\n",
+                   globalStep, CFL_impl, dt);
+            fflush(stdout);
+
+            bool permanentFreezeAV = (inp->AVfreezeAfter > 0 && globalStep >= inp->AVfreezeAfter);
+            if (permanentFreezeAV && !gpu.freezeAV) {
+                gpu.freezeAV = true;
+                printf("AV frozen at step %d\n", globalStep);
+            }
+
+            int maxGMRESRestarts = 3;
+            int newtonIts = backwardEulerStep(gpu, dt, time,
+                                              inp->newtonMaxIter,
+                                              inp->newtonTol,
+                                              inp->gmresTol,
+                                              maxGMRESRestarts);
+
+            if (permanentFreezeAV)
+                gpu.freezeAV = true;
+
+            time += dt;
+            finalIterCount = globalStep + 1;
+
+            nanFound = gpuCheckNaN(gpu);
+            if (nanFound) {
+                printf("\nNaN detected at implicit step %d (CFL=%.1f)\n",
+                       globalStep, CFL_impl);
+
+                gpuRestoreSnapshot(gpu);
+                nanFound = false;
+
+                CFL_impl = fmax(CFL_impl * 0.5, inp->implCFLStart * 0.1);
+                printf("  Reducing CFL to %.1f and retrying\n", CFL_impl);
+                fflush(stdout);
+                time -= dt;
+                finalIterCount--;
+                continue;
+            }
+
+            // Compute residual for convergence monitoring
+            gpuComputeDGRHS(gpu, false, time);
+            double perVarNorms[4];
+            gpuResidualNormPerVarFused(gpu, perVarNorms);
+            double maxRes = *std::max_element(perVarNorms, perVarNorms + 4);
+
+            if (globalStep % logInterval == 0) {
+                csvFile << globalStep
+                        << "," << perVarNorms[0]
+                        << "," << perVarNorms[1]
+                        << "," << perVarNorms[2]
+                        << "," << perVarNorms[3]
+                        << "," << CFL_impl
+                        << "," << newtonIts;
+                if (logForces) {
+                    gpuSyncUcoeff(gpu);
+                    double Cl, Cd;
+                    gpuComputeForceCoeff(gpu, inp->adjChordRef, inp->AoA, Cl, Cd);
+                    csvFile << "," << Cl << "," << Cd;
+                }
+                csvFile << "\n";
+                csvFile.flush();
+            }
+
+            if (maxRes < inp->steadyTol) {
+                printf("\nSteady state converged at step %d: max residual = %.6e\n",
+                       globalStep, maxRes);
+                converged = true;
+            }
+
+            // CFL ramping
+            CFL_impl = fmin(inp->implCFLMax, CFL_impl * inp->implCFLGrowth);
+
+            if ((t_step + 1) % timerInterval == 0) {
+                auto tNow = std::chrono::high_resolution_clock::now();
+                double batchMs = std::chrono::duration<double, std::milli>(tNow - tBatch).count();
+                double msPerStep = batchMs / timerInterval;
+                printf("  Step %d: max_res=%.4e, CFL=%.1f, Newton=%d, "
+                       "%.1f ms/step\n",
+                       globalStep + 1, maxRes, CFL_impl, newtonIts, msPerStep);
+                tBatch = tNow;
+            }
+
+            if (inp->checkpoint > 0 && (globalStep + 1) % inp->checkpoint == 0) {
+                if (modalMode)
+                    gpuCopyQuadPointsToHost(gpu, U_flat.data());
+                else
+                    gpuCopySolutionToHost(gpu, U_flat.data());
+                for (int v = 0; v < NVAR2D; ++v)
+                    std::memcpy(U[v].data(), &U_flat[v * totalDOF],
+                                totalDOF * sizeof(double));
+
+                std::string chkSolpts = "checkpoint_" + std::to_string(globalStep + 1) + "_solpts.vtk";
+                std::vector<double> eps_chk, sensor_chk;
+                if (gpu.useAV) {
+                    eps_chk.resize(nE);
+                    sensor_chk.resize(nE);
+                    gpuCopyEpsilonToHost(gpu, eps_chk.data());
+                    gpuCopySensorToHost(gpu, sensor_chk.data());
+                }
+                writeVTK_solpts(chkSolpts, mesh, geom, U, zq, nq1d, inp->ptype,
+                                eps_chk, sensor_chk);
+                std::string chkBin = "restart2d_" + std::to_string(globalStep + 1) + ".bin";
+                writeRestart(chkBin, U, nE, nqVol, time, globalStep + 1);
+                printf("\nCheckpoint at step %d (time = %.6e)\n",
+                       globalStep + 1, time);
+            }
+
+            if (t_step >= 3)
+                printProgressBar(t_step + 1, nt);
+        }
+
+        csvFile.close();
+        std::cout << "\nResidual history written to residual_history.csv" << std::endl;
+
+    } else {
         // ==================================================================
         // Explicit RK4 time integration
         // ==================================================================
@@ -1740,19 +2023,18 @@ int main(int argc, char* argv[])
         {
             int globalStep = iter_offset + t_step;
 
+            if (inp->AVfreezeAfter > 0 && globalStep >= inp->AVfreezeAfter && !gpu.freezeAV) {
+                gpu.freezeAV = true;
+                std::cout << "AV frozen at step " << globalStep << std::endl;
+            }
+
             gpuSnapshotSolution(gpu);
 
             if (CFL > 0.0)
                 dt = gpuComputeCFL(gpu, CFL, P);
 
             if (t_step == 0 && CFL > 0.0) {
-                int worstElem = gpuCFLDiagnostic(gpu, CFL, P);
-                const auto& enodes = mesh.elements[worstElem];
-                double cx2 = 0, cy2 = 0;
-                for (int n : enodes) { cx2 += mesh.nodes[n][0]; cy2 += mesh.nodes[n][1]; }
-                cx2 /= enodes.size(); cy2 /= enodes.size();
-                printf("  Limiting element centroid: (%.6f, %.6f)\n", cx2, cy2);
-                fflush(stdout);
+                gpuCFLDiagnostic(gpu, CFL, P, mesh);
             }
 
             if (t_step < 5)
@@ -1831,7 +2113,6 @@ int main(int argc, char* argv[])
                 for (int v = 0; v < NVAR2D; ++v)
                     std::memcpy(U[v].data(), &U_flat[v * totalDOF], totalDOF * sizeof(double));
 
-                std::string chkVtk = "checkpoint_" + std::to_string(globalStep + 1) + ".vtk";
                 std::vector<double> eps_chk, sensor_chk;
                 if (gpu.useAV) {
                     eps_chk.resize(nE);
@@ -1839,8 +2120,6 @@ int main(int argc, char* argv[])
                     gpuCopyEpsilonToHost(gpu, eps_chk.data());
                     gpuCopySensorToHost(gpu, sensor_chk.data());
                 }
-                writeVTK(chkVtk, mesh, geom, U, Bmat, Bvis, Minv, wq, zVis, P, nq1d,
-                         eps_chk, sensor_chk);
                 std::string chkSolpts = "checkpoint_" + std::to_string(globalStep + 1) + "_solpts.vtk";
                 writeVTK_solpts(chkSolpts, mesh, geom, U, zq, nq1d, inp->ptype,
                                 eps_chk, sensor_chk);
@@ -1967,16 +2246,17 @@ int main(int argc, char* argv[])
         double chordRef = inp->adjChordRef;
         std::string adjObjective = inp->adjObjective;
 
-        double forceNx, forceNy;
+        double forceNx = 0.0, forceNy = 0.0;
         if (adjObjective == "Drag") {
             forceNx =  std::cos(AoA_rad);
             forceNy =  std::sin(AoA_rad);
-        } else {
+        } else if (adjObjective == "Lift") {
             forceNx = -std::sin(AoA_rad);
             forceNy =  std::cos(AoA_rad);
         }
         std::cout << "Adjoint objective  = " << adjObjective << std::endl;
-        std::cout << "Force direction    = (" << forceNx << ", " << forceNy << ")" << std::endl;
+        if (adjObjective != "LiftOverDrag")
+            std::cout << "Force direction    = (" << forceNx << ", " << forceNy << ")" << std::endl;
 
         // Freeze forward state: populate Ucoeff and epsilon
         gpuComputeDGRHS(gpu, false, 0.0);
@@ -1998,14 +2278,22 @@ int main(int argc, char* argv[])
 
         adjointComputeFrozenAlpha(adj, gpu);
 
-        double objVal = adjointComputeForceCoeff(adj, gpu, chordRef, forceNx, forceNy);
+        double objVal;
         std::cout << std::scientific << std::setprecision(10);
-        if (adjObjective == "Drag")
-            std::cout << "Drag coefficient (Cd) = " << objVal << std::endl;
-        else
-            std::cout << "Lift coefficient (Cl) = " << objVal << std::endl;
-
-        adjointComputeObjectiveGradient(adj, gpu, chordRef, forceNx, forceNy);
+        if (adjObjective == "LiftOverDrag") {
+            double Cl, Cd;
+            objVal = adjointComputeLiftOverDrag(adj, gpu, chordRef, AoA_rad, Cl, Cd);
+            std::cout << "L/D = " << objVal
+                      << "  (Cl=" << Cl << ", Cd=" << Cd << ")" << std::endl;
+            adjointComputeLiftOverDragGradient(adj, gpu, chordRef, AoA_rad);
+        } else {
+            objVal = adjointComputeForceCoeff(adj, gpu, chordRef, forceNx, forceNy);
+            if (adjObjective == "Drag")
+                std::cout << "Drag coefficient (Cd) = " << objVal << std::endl;
+            else
+                std::cout << "Lift coefficient (Cl) = " << objVal << std::endl;
+            adjointComputeObjectiveGradient(adj, gpu, chordRef, forceNx, forceNy);
+        }
         std::cout << "Objective gradient (dJ/dU) computed." << std::endl;
 
         int solSize = NVAR_GPU * adj.primaryDOF;
@@ -2090,9 +2378,8 @@ int main(int argc, char* argv[])
                 std::vector<double> eta_chk = computeErrorIndicator(
                     psi_quad_chk.data(), nE, nqVol, nq1d, totalDOF, wq, geom);
 
-                std::string chkVtk = "adjoint_checkpoint_" + std::to_string(iter + 1) + ".vtk";
-                writeAdjointVTK(chkVtk, mesh, geom, psi_vtk, Bmat, Bvis,
-                                Minv, wq, zVis, P, nq1d, eta_chk);
+                std::string chkVtk = "adjoint_checkpoint_" + std::to_string(iter + 1) + "_solpts.vtk";
+                writeAdjointVTK_solpts(chkVtk, mesh, geom, psi_vtk, zq, nq1d, inp->ptype, eta_chk);
 
                 // Save raw coefficients (or quad values) for restart
                 adjointCopySolutionToHost(adj, psi_chk.data(), solSize);
@@ -2154,13 +2441,25 @@ int main(int argc, char* argv[])
                 gpuCopySolutionToDevice(gpu, U_pert.data());
                 gpuComputeDGRHS(gpu, false, 0.0);
                 gpuSyncUcoeff(gpu);
-                double Jp = adjointComputeForceCoeff(adj, gpu, chordRef, forceNx, forceNy);
+                double Jp;
+                if (adjObjective == "LiftOverDrag") {
+                    double Cl_p, Cd_p;
+                    Jp = adjointComputeLiftOverDrag(adj, gpu, chordRef, AoA_rad, Cl_p, Cd_p);
+                } else {
+                    Jp = adjointComputeForceCoeff(adj, gpu, chordRef, forceNx, forceNy);
+                }
 
                 U_pert[var * totalDOF + dof] -= 2.0 * fd_eps;
                 gpuCopySolutionToDevice(gpu, U_pert.data());
                 gpuComputeDGRHS(gpu, false, 0.0);
                 gpuSyncUcoeff(gpu);
-                double Jm = adjointComputeForceCoeff(adj, gpu, chordRef, forceNx, forceNy);
+                double Jm;
+                if (adjObjective == "LiftOverDrag") {
+                    double Cl_m, Cd_m;
+                    Jm = adjointComputeLiftOverDrag(adj, gpu, chordRef, AoA_rad, Cl_m, Cd_m);
+                } else {
+                    Jm = adjointComputeForceCoeff(adj, gpu, chordRef, forceNx, forceNy);
+                }
 
                 double fd_grad = (Jp - Jm) / (2.0 * fd_eps);
 
@@ -2195,6 +2494,10 @@ int main(int argc, char* argv[])
         adjointGpuFree(adj);
     }
 
+    if (useImplicit) {
+        for (auto& L : gpu.pmg_levels) pmgFreeLevel(L);
+        gpuImplicitFree(gpu);
+    }
     gpuFree(gpu);
     delete inp;
     return 0;

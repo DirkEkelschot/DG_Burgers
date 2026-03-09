@@ -75,6 +75,13 @@ double adjointComputeForceCoeff(AdjointGPUData& adj, const GPUSolverData& gpu,
 void adjointComputeObjectiveGradient(AdjointGPUData& adj, const GPUSolverData& gpu,
                                      double chordRef, double forceNx, double forceNy);
 
+double adjointComputeLiftOverDrag(AdjointGPUData& adj, const GPUSolverData& gpu,
+                                  double chordRef, double AoA_rad,
+                                  double& Cl_out, double& Cd_out);
+
+void adjointComputeLiftOverDragGradient(AdjointGPUData& adj, const GPUSolverData& gpu,
+                                        double chordRef, double AoA_rad);
+
 void adjointComputeRHS(AdjointGPUData& adj, const GPUSolverData& gpu, bool usePsiTmp);
 
 void adjointRK4Stage(AdjointGPUData& adj, double dt, int stage, int N);
@@ -88,6 +95,8 @@ void adjointCopySolutionToHost(AdjointGPUData& adj, double* psi_flat, int N);
 void adjointCopyQuadPointsToHost(AdjointGPUData& adj, const GPUSolverData& gpu,
                                  double* psi_quad_flat);
 void adjointCopySolutionToDevice(AdjointGPUData& adj, const double* psi_flat, int N);
+void adjointCopyEpsilonToHost(AdjointGPUData& adj, const GPUSolverData& gpu, double* eps_host);
+void adjointCopySensorToHost(AdjointGPUData& adj, const GPUSolverData& gpu, double* sensor_host);
 
 // Variable-P adjoint support
 void adjointAllocatePGroup(AdjointPGroup& grp, int P, int nEGroup);

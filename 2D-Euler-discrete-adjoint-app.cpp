@@ -517,16 +517,17 @@ int main(int argc, char* argv[])
     // Force direction
     // ========================================================================
     double AoA_rad = inp->AoA * M_PI / 180.0;
-    double forceNx, forceNy;
+    double forceNx = 0.0, forceNy = 0.0;
     if (adjObjective == "Drag") {
         forceNx =  std::cos(AoA_rad);
         forceNy =  std::sin(AoA_rad);
-    } else {
+    } else if (adjObjective == "Lift") {
         forceNx = -std::sin(AoA_rad);
         forceNy =  std::cos(AoA_rad);
     }
     std::cout << "Discrete adjoint objective = " << adjObjective << std::endl;
-    std::cout << "Force direction            = (" << forceNx << ", " << forceNy << ")" << std::endl;
+    if (adjObjective != "LiftOverDrag")
+        std::cout << "Force direction            = (" << forceNx << ", " << forceNy << ")" << std::endl;
 
     // ========================================================================
     // Flatten data for GPU
@@ -697,14 +698,22 @@ int main(int argc, char* argv[])
     discreteAdjointSetBasisData(Bmat_flat.data(), Dmat_flat.data(),
                                 blr_flat.data(), wq.data(), P1, nq1d);
 
-    double objVal = discreteAdjointComputeForceCoeff(da, gpu, chordRef, forceNx, forceNy);
+    double objVal;
     std::cout << std::scientific << std::setprecision(10);
-    if (adjObjective == "Drag")
-        std::cout << "Drag coefficient (Cd) = " << objVal << std::endl;
-    else
-        std::cout << "Lift coefficient (Cl) = " << objVal << std::endl;
-
-    discreteAdjointComputeObjectiveGradient(da, gpu, chordRef, forceNx, forceNy);
+    if (adjObjective == "LiftOverDrag") {
+        double Cl, Cd;
+        objVal = discreteAdjointComputeLiftOverDrag(da, gpu, chordRef, AoA_rad, Cl, Cd);
+        std::cout << "L/D = " << objVal
+                  << "  (Cl=" << Cl << ", Cd=" << Cd << ")" << std::endl;
+        discreteAdjointComputeLiftOverDragGradient(da, gpu, chordRef, AoA_rad);
+    } else {
+        objVal = discreteAdjointComputeForceCoeff(da, gpu, chordRef, forceNx, forceNy);
+        if (adjObjective == "Drag")
+            std::cout << "Drag coefficient (Cd) = " << objVal << std::endl;
+        else
+            std::cout << "Lift coefficient (Cl) = " << objVal << std::endl;
+        discreteAdjointComputeObjectiveGradient(da, gpu, chordRef, forceNx, forceNy);
+    }
     std::cout << "Objective gradient (dJ/dU) computed." << std::endl;
 
     int solSize = NVAR_GPU * da.primaryDOF;
@@ -872,13 +881,25 @@ int main(int argc, char* argv[])
             gpuCopySolutionToDevice(gpu, U_pert.data());
             gpuComputeDGRHS(gpu, false, 0.0);
             gpuSyncUcoeff(gpu);
-            double Jp = discreteAdjointComputeForceCoeff(da, gpu, chordRef, forceNx, forceNy);
+            double Jp;
+            if (adjObjective == "LiftOverDrag") {
+                double Cl_p, Cd_p;
+                Jp = discreteAdjointComputeLiftOverDrag(da, gpu, chordRef, AoA_rad, Cl_p, Cd_p);
+            } else {
+                Jp = discreteAdjointComputeForceCoeff(da, gpu, chordRef, forceNx, forceNy);
+            }
 
             U_pert[var * totalDOF + dof] -= 2.0 * fd_eps;
             gpuCopySolutionToDevice(gpu, U_pert.data());
             gpuComputeDGRHS(gpu, false, 0.0);
             gpuSyncUcoeff(gpu);
-            double Jm = discreteAdjointComputeForceCoeff(da, gpu, chordRef, forceNx, forceNy);
+            double Jm;
+            if (adjObjective == "LiftOverDrag") {
+                double Cl_m, Cd_m;
+                Jm = discreteAdjointComputeLiftOverDrag(da, gpu, chordRef, AoA_rad, Cl_m, Cd_m);
+            } else {
+                Jm = discreteAdjointComputeForceCoeff(da, gpu, chordRef, forceNx, forceNy);
+            }
 
             double fd_grad = (Jp - Jm) / (2.0 * fd_eps);
 

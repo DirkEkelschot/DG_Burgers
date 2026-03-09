@@ -1,4 +1,5 @@
 #include "euler2d_gpu.h"
+#include "mesh2d.h"
 #include <cuda_runtime.h>
 #include <cstdio>
 #include <cstring>
@@ -1405,7 +1406,7 @@ void gpuComputeDGRHS(GPUSolverData& gpu, bool useUtmp, double time)
 
 
         // --- Shock sensor (reads coefficients directly) ---
-        if (gpu.useAV) {
+        if (gpu.useAV && !gpu.freezeAV) {
             int blockS = 256;
             int gridS  = (nE + blockS - 1) / blockS;
             double uMag = sqrt(gpu.uInf*gpu.uInf + gpu.vInf*gpu.vInf);
@@ -1468,7 +1469,7 @@ void gpuComputeDGRHS(GPUSolverData& gpu, bool useUtmp, double time)
             d_Uin, gpu.d_Ucoeff, gpu.d_detJ, gpu.d_Minv,
             nE, P1, nq1d, nmodes, nqVol, totalDOF, nullptr);
 
-        if (gpu.useAV) {
+        if (gpu.useAV && !gpu.freezeAV) {
             int blockS = 256;
             int gridS  = (nE + blockS - 1) / blockS;
             double uMag = sqrt(gpu.uInf*gpu.uInf + gpu.vInf*gpu.vInf);
@@ -1614,7 +1615,7 @@ double gpuComputeCFL(GPUSolverData& gpu, double CFL, int P)
 // Host wrapper: CFL diagnostic (find limiting element)
 // ============================================================================
 
-int gpuCFLDiagnostic(GPUSolverData& gpu, double CFL, int P)
+int gpuCFLDiagnostic(GPUSolverData& gpu, double CFL, int P, const Mesh2D& mesh)
 {
     const double* d_Upts;
     if (gpu.modalMode) {
@@ -1659,9 +1660,16 @@ int gpuCFLDiagnostic(GPUSolverData& gpu, double CFL, int P)
     for (int i = 0; i < gpu.nE; i++) idx[i] = i;
     std::sort(idx.begin(), idx.end(), [&](int a, int b){ return h_dt[a] < h_dt[b]; });
     printf("  Top-10 CFL-limiting elements:\n");
-    printf("  %8s  %14s  %14s\n", "elem", "dt", "h");
-    for (int k = 0; k < std::min(10, gpu.nE); k++)
-        printf("  %8d  %14.6e  %14.6e\n", idx[k], h_dt[idx[k]], h_h[idx[k]]);
+    printf("  %8s  %14s  %14s  %12s  %12s\n", "elem", "dt", "h", "cx", "cy");
+    for (int k = 0; k < std::min(10, gpu.nE); k++) {
+        int e = idx[k];
+        const auto& enodes = mesh.elements[e];
+        double cx = 0, cy = 0;
+        for (int n : enodes) { cx += mesh.nodes[n][0]; cy += mesh.nodes[n][1]; }
+        cx /= enodes.size(); cy /= enodes.size();
+        printf("  %8d  %14.6e  %14.6e  %12.6f  %12.6f\n",
+               e, h_dt[e], h_h[e], cx, cy);
+    }
     printf("======================\n");
     fflush(stdout);
     return minIdx;
@@ -1832,8 +1840,8 @@ void gpuComputeDGRHS_group(GPUSolverData& gpu, PGroupGPU& grp,
         d_Uin, grp.d_Ucoeff, gpu.d_detJ, grp.d_Minv,
         nEG, P1, nq1d, nmodes, nqVol, totalDOF, grp.d_elemIdx);
 
-    // Shock sensor
-    if (gpu.useAV) {
+    // Shock sensor (skipped when freezeAV is set for implicit solver)
+    if (gpu.useAV && !gpu.freezeAV) {
         int blockS = 256;
         int gridS  = (nEG + blockS - 1) / blockS;
         double uMag = sqrt(gpu.uInf*gpu.uInf + gpu.vInf*gpu.vInf);
@@ -1990,3 +1998,67 @@ void gpuComputeForceCoeff(GPUSolverData& gpu,
     cudaFree(d_buf);
 }
 
+// ============================================================================
+// Wrapper functions for launching DG kernels with arbitrary P (for p-multigrid)
+// ============================================================================
+
+void gpuLaunchBackwardTransform(GPUSolverData& gpu,
+                                const double* d_coeffs, double* d_quad,
+                                int P1, int nmodes)
+{
+    int nE = gpu.nE, nq1d = gpu.nq1d;
+    int nqVol = gpu.nqVol, totalDOF = gpu.totalDOF;
+    int blockBT = max(64, NVAR_GPU * nqVol);
+    if (blockBT % 32 != 0) blockBT = ((blockBT + 31) / 32) * 32;
+    backwardTransformKernel<<<nE, blockBT>>>(
+        d_coeffs, d_quad, nE, P1, nq1d, nmodes, nqVol, totalDOF);
+}
+
+void gpuLaunchVolumeSurfaceAV(GPUSolverData& gpu,
+                              const double* d_quad, const double* d_coeffs,
+                              double* d_rhsCoeff,
+                              int P1, int nmodes)
+{
+    int nE = gpu.nE, nq1d = gpu.nq1d;
+    int nqVol = gpu.nqVol, totalDOF = gpu.totalDOF;
+    int nqFace = gpu.nqFace;
+
+    int nwork   = NVAR_GPU * nmodes;
+    int nFaceQP = 4 * nqFace;
+    int blockDim2 = ((nwork + nFaceQP + 31) / 32) * 32;
+    int smem2 = (9 * nqVol + nFaceQP * 4) * sizeof(double);
+    const double* d_eps_ptr = gpu.useAV ? gpu.d_epsilon : nullptr;
+
+    volumeSurfaceKernel<<<nE, blockDim2, smem2>>>(
+        d_quad, d_coeffs, d_rhsCoeff,
+        gpu.d_detJ, gpu.d_dxidx, gpu.d_dxidy, gpu.d_detadx, gpu.d_detady,
+        gpu.d_faceNx, gpu.d_faceNy, gpu.d_faceJac,
+        gpu.d_elem2face, gpu.d_face_elemL, gpu.d_face_elemR,
+        gpu.d_face_faceL, gpu.d_face_faceR, gpu.d_face_bcType,
+        nE, P1, nq1d, nmodes, nqVol, totalDOF, nqFace,
+        gpu.rhoInf, gpu.uInf, gpu.vInf, gpu.pInf,
+        gpu.fluxType,
+        d_eps_ptr, nullptr);
+
+    if (gpu.useAV) {
+        int blockAV = max(64, NVAR_GPU * nmodes);
+        if (blockAV % 32 != 0) blockAV = ((blockAV + 31) / 32) * 32;
+        blockAV = max(blockAV, NVAR_GPU * nqVol);
+        if (blockAV % 32 != 0) blockAV = ((blockAV + 31) / 32) * 32;
+        int smemAV = (NVAR_GPU * nmodes + 2 * NVAR_GPU * nqVol) * sizeof(double);
+        avVolumeKernel<<<nE, blockAV, smemAV>>>(
+            d_coeffs, d_rhsCoeff,
+            gpu.d_detJ, gpu.d_dxidx, gpu.d_dxidy, gpu.d_detadx, gpu.d_detady,
+            gpu.d_epsilon,
+            nE, P1, nq1d, nmodes, nqVol, nullptr);
+    }
+}
+
+void gpuLaunchMassSolveModal(const double* d_rhsCoeff, double* d_R,
+                             const double* d_Minv,
+                             int nE, int nmodes)
+{
+    int blockDim3 = max(64, NVAR_GPU * nmodes);
+    if (blockDim3 % 32 != 0) blockDim3 = ((blockDim3 + 31) / 32) * 32;
+    massSolveModalKernel<<<nE, blockDim3>>>(d_rhsCoeff, d_R, d_Minv, nE, nmodes);
+}

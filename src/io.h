@@ -42,6 +42,7 @@ struct Inputs2D {
     double AVs0             = 0.0;
     double AVkappa          = 1.0;
     double AVscale          = 1.0;
+    int    AVfreezeAfter    = 0;
     int    adjMaxIter       = 10000;
     double adjTol           = 1e-10;
     double adjChordRef      = 1.0;
@@ -61,6 +62,17 @@ struct Inputs2D {
     int    optNBumpsLower   = 10;
     double optFDEpsilon     = 1e-7;
     std::string baseMeshFile;
+
+    // Implicit solver (JFNK)
+    double implCFLStart     = 10.0;
+    double implCFLMax       = 1000.0;
+    double implCFLGrowth    = 1.5;
+    int    newtonMaxIter    = 10;
+    double newtonTol        = 1e-6;
+    int    gmresRestart     = 30;
+    double gmresTol         = 0.1;
+    double steadyTol        = 1e-12;
+    std::string preconditioner = "BlockJacobi";
 };
 
 void ParseEquals(const std::string &line, std::string &lhs,

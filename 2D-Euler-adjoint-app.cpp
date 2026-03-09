@@ -439,7 +439,9 @@ static void writeAdjointVTK_solpts(const std::string& filename,
                                    const std::vector<double>& tau = {},
                                    const std::vector<double>& dwr = {},
                                    const std::vector<double>& trunc_diff = {},
-                                   const std::vector<std::vector<double>>& U = {})
+                                   const std::vector<std::vector<double>>& U = {},
+                                   const std::vector<double>& adjEpsilon = {},
+                                   const std::vector<double>& adjSensor = {})
 {
     int nE    = mesh.nElements;
     int nqVol = nq1d * nq1d;
@@ -568,7 +570,8 @@ static void writeAdjointVTK_solpts(const std::string& filename,
             out << std::sqrt(diffMagAug[i]) << "\n";
     }
 
-    if (!eta.empty() || !tau.empty() || !dwr.empty()) {
+    if (!eta.empty() || !tau.empty() || !dwr.empty()
+        || !adjEpsilon.empty() || !adjSensor.empty()) {
         out << "CELL_DATA " << nCells << "\n";
 
         auto writeCellScalar = [&](const char* name, const std::vector<double>& v) {
@@ -583,6 +586,8 @@ static void writeAdjointVTK_solpts(const std::string& filename,
         writeCellScalar("TruncationError", tau);
         writeCellScalar("ErrorIndicator", eta);
         writeCellScalar("DWR", dwr);
+        writeCellScalar("AdjointArtificialViscosity", adjEpsilon);
+        writeCellScalar("AdjointShockSensor", adjSensor);
     }
 
     out.close();
@@ -988,10 +993,10 @@ static int runVariablePAdjoint(Inputs2D* inp, Mesh2D& mesh)
     // Adjoint setup
     double chordRef = inp->adjChordRef;
     std::string adjObjective = inp->adjObjective;
-    double forceNx, forceNy;
+    double forceNx = 0.0, forceNy = 0.0;
     if (adjObjective == "Drag") {
         forceNx =  std::cos(AoA_rad); forceNy =  std::sin(AoA_rad);
-    } else {
+    } else if (adjObjective == "Lift") {
         forceNx = -std::sin(AoA_rad); forceNy =  std::cos(AoA_rad);
     }
 
@@ -1012,9 +1017,18 @@ static int runVariablePAdjoint(Inputs2D* inp, Mesh2D& mesh)
 
     adjointComputeFrozenAlpha(adj, gpu);
 
-    double objVal = adjointComputeForceCoeff(adj, gpu, chordRef, forceNx, forceNy);
-    std::cout << "Objective = " << adjObjective << " = " << objVal << std::endl;
-    adjointComputeObjectiveGradient(adj, gpu, chordRef, forceNx, forceNy);
+    double objVal;
+    if (adjObjective == "LiftOverDrag") {
+        double Cl, Cd;
+        objVal = adjointComputeLiftOverDrag(adj, gpu, chordRef, AoA_rad, Cl, Cd);
+        std::cout << "Objective = L/D = " << objVal
+                  << "  (Cl=" << Cl << ", Cd=" << Cd << ")" << std::endl;
+        adjointComputeLiftOverDragGradient(adj, gpu, chordRef, AoA_rad);
+    } else {
+        objVal = adjointComputeForceCoeff(adj, gpu, chordRef, forceNx, forceNy);
+        std::cout << "Objective = " << adjObjective << " = " << objVal << std::endl;
+        adjointComputeObjectiveGradient(adj, gpu, chordRef, forceNx, forceNy);
+    }
 
     int solSize = NVAR_GPU * adj.primaryDOF;
     int adjMaxIter = inp->adjMaxIter;
@@ -1163,7 +1177,15 @@ static int runVariablePAdjoint(Inputs2D* inp, Mesh2D& mesh)
     std::vector<double> dwr = computeDWR(
         psi_flat.data(), trunc_diff, nE, nqVol, nq1d, totalDOF, wq, geom);
 
-    writeAdjointVTK_solpts("adjoint2d_final_solpts.vtk", mesh, geom, psi, zq, nq1d, inp->ptype, eta, tau, dwr, trunc_diff, U);
+    std::vector<double> adjEps, adjSens;
+    if (gpu.useAV) {
+        adjEps.resize(nE);
+        adjSens.resize(nE);
+        adjointCopyEpsilonToHost(adj, gpu, adjEps.data());
+        adjointCopySensorToHost(adj, gpu, adjSens.data());
+    }
+
+    writeAdjointVTK_solpts("adjoint2d_final_solpts.vtk", mesh, geom, psi, zq, nq1d, inp->ptype, eta, tau, dwr, trunc_diff, U, adjEps, adjSens);
     std::cout << "Adjoint output written to adjoint2d_final_solpts.vtk" << std::endl;
 
     if (!nanFound) {
@@ -1340,16 +1362,17 @@ int main(int argc, char* argv[])
     // Force direction for lift/drag objective
     // ========================================================================
     double AoA_rad = inp->AoA * M_PI / 180.0;
-    double forceNx, forceNy;
+    double forceNx = 0.0, forceNy = 0.0;
     if (adjObjective == "Drag") {
         forceNx =  std::cos(AoA_rad);
         forceNy =  std::sin(AoA_rad);
-    } else {
+    } else if (adjObjective == "Lift") {
         forceNx = -std::sin(AoA_rad);
         forceNy =  std::cos(AoA_rad);
     }
     std::cout << "Adjoint objective  = " << adjObjective << std::endl;
-    std::cout << "Force direction    = (" << forceNx << ", " << forceNy << ")" << std::endl;
+    if (adjObjective != "LiftOverDrag")
+        std::cout << "Force direction    = (" << forceNx << ", " << forceNy << ")" << std::endl;
 
     // ========================================================================
     // Flatten data for GPU
@@ -1530,14 +1553,22 @@ int main(int argc, char* argv[])
 
     adjointComputeFrozenAlpha(adj, gpu);
 
-    double objVal = adjointComputeForceCoeff(adj, gpu, chordRef, forceNx, forceNy);
+    double objVal;
     std::cout << std::scientific << std::setprecision(10);
-    if (adjObjective == "Drag")
-        std::cout << "Drag coefficient (Cd) = " << objVal << std::endl;
-    else
-        std::cout << "Lift coefficient (Cl) = " << objVal << std::endl;
-
-    adjointComputeObjectiveGradient(adj, gpu, chordRef, forceNx, forceNy);
+    if (adjObjective == "LiftOverDrag") {
+        double Cl, Cd;
+        objVal = adjointComputeLiftOverDrag(adj, gpu, chordRef, AoA_rad, Cl, Cd);
+        std::cout << "L/D = " << objVal
+                  << "  (Cl=" << Cl << ", Cd=" << Cd << ")" << std::endl;
+        adjointComputeLiftOverDragGradient(adj, gpu, chordRef, AoA_rad);
+    } else {
+        objVal = adjointComputeForceCoeff(adj, gpu, chordRef, forceNx, forceNy);
+        if (adjObjective == "Drag")
+            std::cout << "Drag coefficient (Cd) = " << objVal << std::endl;
+        else
+            std::cout << "Lift coefficient (Cl) = " << objVal << std::endl;
+        adjointComputeObjectiveGradient(adj, gpu, chordRef, forceNx, forceNy);
+    }
     std::cout << "Objective gradient (dJ/dU) computed." << std::endl;
 
     int solSize = NVAR_GPU * adj.primaryDOF;
@@ -1650,9 +1681,9 @@ int main(int argc, char* argv[])
             std::vector<double> dwr_chk = computeDWR(
                 psi_quad_chk.data(), trunc_diff, nE, nqVol, nq1d, totalDOF, wq, geom);
 
-            std::string chkVtk = "adjoint_checkpoint_" + std::to_string(iter + 1) + ".vtk";
-            writeAdjointVTK(chkVtk, mesh, geom, psi_vtk, Bmat, Bvis,
-                            Minv, wq, zVis, P, nq1d, eta_chk, tau, dwr_chk, trunc_diff, U);
+            std::string chkVtk = "adjoint_checkpoint_" + std::to_string(iter + 1) + "_solpts.vtk";
+            writeAdjointVTK_solpts(chkVtk, mesh, geom, psi_vtk, zq, nq1d, inp->ptype,
+                                   eta_chk, tau, dwr_chk, trunc_diff, U);
 
             adjointCopySolutionToHost(adj, psi_chk.data(), solSize);
             std::string chkBin = "adjoint_restart_" + std::to_string(iter + 1) + ".bin";
@@ -1688,9 +1719,17 @@ int main(int argc, char* argv[])
     std::vector<double> dwr = computeDWR(
         psi_flat.data(), trunc_diff, nE, nqVol, nq1d, totalDOF, wq, geom);
 
+    std::vector<double> adjEps, adjSens;
+    if (gpu.useAV) {
+        adjEps.resize(nE);
+        adjSens.resize(nE);
+        adjointCopyEpsilonToHost(adj, gpu, adjEps.data());
+        adjointCopySensorToHost(adj, gpu, adjSens.data());
+    }
+
     writeAdjointVTK("adjoint2d_final.vtk", mesh, geom, psi, Bmat, Bvis,
                     Minv, wq, zVis, P, nq1d, eta, tau, dwr, trunc_diff, U);
-    writeAdjointVTK_solpts("adjoint2d_final_solpts.vtk", mesh, geom, psi, zq, nq1d, inp->ptype, eta, tau, dwr, trunc_diff, U);
+    writeAdjointVTK_solpts("adjoint2d_final_solpts.vtk", mesh, geom, psi, zq, nq1d, inp->ptype, eta, tau, dwr, trunc_diff, U, adjEps, adjSens);
     std::cout << "Adjoint solution written to adjoint2d_final.vtk" << std::endl;
     std::cout << "Adjoint solution-point output written to adjoint2d_final_solpts.vtk" << std::endl;
 
@@ -1719,13 +1758,25 @@ int main(int argc, char* argv[])
             gpuCopySolutionToDevice(gpu, U_pert.data());
             gpuComputeDGRHS(gpu, false, 0.0);
             gpuSyncUcoeff(gpu);
-            double Jp = adjointComputeForceCoeff(adj, gpu, chordRef, forceNx, forceNy);
+            double Jp;
+            if (adjObjective == "LiftOverDrag") {
+                double Cl_p, Cd_p;
+                Jp = adjointComputeLiftOverDrag(adj, gpu, chordRef, AoA_rad, Cl_p, Cd_p);
+            } else {
+                Jp = adjointComputeForceCoeff(adj, gpu, chordRef, forceNx, forceNy);
+            }
 
             U_pert[var * totalDOF + dof] -= 2.0 * fd_eps;
             gpuCopySolutionToDevice(gpu, U_pert.data());
             gpuComputeDGRHS(gpu, false, 0.0);
             gpuSyncUcoeff(gpu);
-            double Jm = adjointComputeForceCoeff(adj, gpu, chordRef, forceNx, forceNy);
+            double Jm;
+            if (adjObjective == "LiftOverDrag") {
+                double Cl_m, Cd_m;
+                Jm = adjointComputeLiftOverDrag(adj, gpu, chordRef, AoA_rad, Cl_m, Cd_m);
+            } else {
+                Jm = adjointComputeForceCoeff(adj, gpu, chordRef, forceNx, forceNy);
+            }
 
             double fd_grad = (Jp - Jm) / (2.0 * fd_eps);
 

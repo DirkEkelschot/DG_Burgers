@@ -163,3 +163,105 @@ std::vector<double> computeShapeGradient(
 
     return gradient;
 }
+
+std::vector<double> computeShapeGradientLoverD(
+    GPUSolverData& gpu,
+    DiscreteAdjointGPUData& da,
+    Mesh2D& mesh,
+    const std::vector<std::array<double, 2>>& baselineNodes,
+    const GeomData2D& baselineGeom,
+    const HicksHenneParam& hh,
+    const std::vector<double>& alpha,
+    const std::vector<WallNodeInfo>& wallNodes,
+    MeshDeformer& deformer,
+    const std::vector<double>& xiVol,
+    const std::vector<double>& etaVol,
+    int nqVol,
+    const std::vector<double>& zFace,
+    int nqFace,
+    double chordRef,
+    double AoA_rad,
+    double fdEpsilon,
+    double baselineJ)
+{
+    double liftNx = -std::sin(AoA_rad), liftNy = std::cos(AoA_rad);
+    double dragNx =  std::cos(AoA_rad), dragNy = std::sin(AoA_rad);
+
+    int nDesign = hh.nDesignVars();
+    std::vector<double> gradient(nDesign, 0.0);
+
+    // Baseline residual
+    gpuUpdateGeometry(gpu,
+        baselineGeom.detJ.data(), baselineGeom.dxidx.data(), baselineGeom.dxidy.data(),
+        baselineGeom.detadx.data(), baselineGeom.detady.data(),
+        baselineGeom.faceNx.data(), baselineGeom.faceNy.data(), baselineGeom.faceJac.data(),
+        baselineGeom.faceXPhys.data(), baselineGeom.faceYPhys.data());
+
+    gpuComputeDGRHS(gpu, false, 0.0);
+
+    int solSize = NVAR_GPU * gpu.primaryDOF;
+    std::vector<double> R_baseline(solSize);
+    if (gpu.modalMode) {
+        CUDA_CHECK(cudaMemcpy(R_baseline.data(), gpu.d_rhsCoeff,
+                              solSize * sizeof(double), cudaMemcpyDeviceToHost));
+    } else {
+        CUDA_CHECK(cudaMemcpy(R_baseline.data(), gpu.d_R,
+                              solSize * sizeof(double), cudaMemcpyDeviceToHost));
+    }
+
+    std::vector<double> psi_host(solSize);
+    discreteAdjointCopySolutionToHost(da, psi_host.data(), solSize);
+
+    std::cout << "Computing L/D shape gradient (" << nDesign << " design variables)..." << std::endl;
+
+    for (int k = 0; k < nDesign; ++k) {
+        std::vector<double> alpha_pert(alpha);
+        alpha_pert[k] += fdEpsilon;
+
+        deformMesh(mesh, hh, alpha_pert, wallNodes, deformer, baselineNodes);
+        GeomData2D geom_pert = computeGeometry(mesh, xiVol, etaVol, nqVol, zFace, nqFace);
+
+        gpuUpdateGeometry(gpu,
+            geom_pert.detJ.data(), geom_pert.dxidx.data(), geom_pert.dxidy.data(),
+            geom_pert.detadx.data(), geom_pert.detady.data(),
+            geom_pert.faceNx.data(), geom_pert.faceNy.data(), geom_pert.faceJac.data(),
+            geom_pert.faceXPhys.data(), geom_pert.faceYPhys.data());
+
+        double Cl_pert = discreteAdjointComputeForceCoeff(da, gpu, chordRef, liftNx, liftNy);
+        double Cd_pert = discreteAdjointComputeForceCoeff(da, gpu, chordRef, dragNx, dragNy);
+        double J_pert = Cl_pert / Cd_pert;
+
+        gpuComputeDGRHS(gpu, false, 0.0);
+
+        std::vector<double> R_pert(solSize);
+        if (gpu.modalMode) {
+            CUDA_CHECK(cudaMemcpy(R_pert.data(), gpu.d_rhsCoeff,
+                                  solSize * sizeof(double), cudaMemcpyDeviceToHost));
+        } else {
+            CUDA_CHECK(cudaMemcpy(R_pert.data(), gpu.d_R,
+                                  solSize * sizeof(double), cudaMemcpyDeviceToHost));
+        }
+
+        double dJdirect = (J_pert - baselineJ) / fdEpsilon;
+
+        double psiTdR = 0.0;
+        for (int i = 0; i < solSize; ++i)
+            psiTdR += psi_host[i] * (R_pert[i] - R_baseline[i]);
+        psiTdR /= fdEpsilon;
+
+        gradient[k] = dJdirect + psiTdR;
+
+        std::cout << "  alpha_" << k << ": dJ_direct=" << dJdirect
+                  << "  psi^T*dR=" << psiTdR
+                  << "  total=" << gradient[k] << std::endl;
+    }
+
+    mesh.nodes = baselineNodes;
+    gpuUpdateGeometry(gpu,
+        baselineGeom.detJ.data(), baselineGeom.dxidx.data(), baselineGeom.dxidy.data(),
+        baselineGeom.detadx.data(), baselineGeom.detady.data(),
+        baselineGeom.faceNx.data(), baselineGeom.faceNy.data(), baselineGeom.faceJac.data(),
+        baselineGeom.faceXPhys.data(), baselineGeom.faceYPhys.data());
+
+    return gradient;
+}

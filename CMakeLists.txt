@@ -41,13 +41,14 @@ add_executable(app2d
     src/euler2d.cpp
     src/euler2d_gpu.cu
     src/adjoint2d_gpu.cu
+    src/implicit_solver.cu
     src/p_adapt.cpp
     2D-Euler-app.cpp
 )
 if(DEFAULT_BLAS_ROOT AND EXISTS "${DEFAULT_BLAS_ROOT}/include")
     target_include_directories(app2d PRIVATE "${DEFAULT_BLAS_ROOT}/include")
 endif()
-target_link_libraries(app2d ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES})
+target_link_libraries(app2d ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES} CUDA::cublas)
 set_property(TARGET app2d PROPERTY CXX_STANDARD 17)
 set_property(TARGET app2d PROPERTY CUDA_STANDARD 17)
 set_target_properties(app2d PROPERTIES CUDA_ARCHITECTURES "90")

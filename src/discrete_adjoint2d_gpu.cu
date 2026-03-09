@@ -1166,6 +1166,93 @@ void discreteAdjointComputeObjectiveGradient(DiscreteAdjointGPUData& da,
         nE, nmodes);
 }
 
+// ============================================================================
+// Lift-over-Drag objective: J = Cl / Cd
+// ============================================================================
+
+__global__ void daLinearCombineKernel(double a, const double* __restrict__ A,
+                                      double b, const double* __restrict__ B,
+                                      double* __restrict__ C, int n)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) C[i] = a * A[i] + b * B[i];
+}
+
+double discreteAdjointComputeLiftOverDrag(DiscreteAdjointGPUData& da,
+                                          const GPUSolverData& gpu,
+                                          double chordRef, double AoA_rad,
+                                          double& Cl_out, double& Cd_out)
+{
+    double liftNx = -std::sin(AoA_rad), liftNy = std::cos(AoA_rad);
+    double dragNx =  std::cos(AoA_rad), dragNy = std::sin(AoA_rad);
+    Cl_out = discreteAdjointComputeForceCoeff(da, gpu, chordRef, liftNx, liftNy);
+    Cd_out = discreteAdjointComputeForceCoeff(da, gpu, chordRef, dragNx, dragNy);
+    return Cl_out / Cd_out;
+}
+
+void discreteAdjointComputeLiftOverDragGradient(DiscreteAdjointGPUData& da,
+                                                const GPUSolverData& gpu,
+                                                double chordRef, double AoA_rad)
+{
+    double Cl, Cd;
+    discreteAdjointComputeLiftOverDrag(da, gpu, chordRef, AoA_rad, Cl, Cd);
+
+    int nE = gpu.nE, P1 = gpu.P1, nq1d = gpu.nq1d;
+    int nmodes = gpu.nmodes;
+    double Vinf2 = gpu.uInf*gpu.uInf + gpu.vInf*gpu.vInf;
+    double normalization = 0.5 * gpu.rhoInf * Vinf2 * chordRef;
+    if (normalization < 1e-30) normalization = 1.0;
+
+    int coeffSize = NVAR_GPU * nE * nmodes;
+    int bk = std::max(64, NVAR_GPU * nmodes);
+    if (bk % 32 != 0) bk = ((bk + 31) / 32) * 32;
+
+    // Temporary buffer for lift gradient
+    double* d_gradLift = nullptr;
+    DA_CUDA_CHECK(cudaMalloc(&d_gradLift, coeffSize * sizeof(double)));
+
+    // --- Compute lift gradient ---
+    double liftNx = -std::sin(AoA_rad), liftNy = std::cos(AoA_rad);
+    DA_CUDA_CHECK(cudaMemset(da.d_adjRhsCoeff, 0, coeffSize * sizeof(double)));
+    daObjectiveGradientCoeffKernel<<<nE, bk>>>(
+        gpu.d_Ucoeff, da.d_adjRhsCoeff,
+        gpu.d_faceNx, gpu.d_faceNy, gpu.d_faceJac,
+        gpu.d_elem2face, gpu.d_face_elemL, gpu.d_face_elemR,
+        gpu.d_face_bcType,
+        nE, P1, nq1d, nmodes, gpu.nqFace,
+        normalization, liftNx, liftNy);
+
+    int bk2 = std::max(64, NVAR_GPU * nmodes);
+    if (bk2 % 32 != 0) bk2 = ((bk2 + 31) / 32) * 32;
+    daMassSolveModalKernel<<<nE, bk2>>>(
+        da.d_adjRhsCoeff, d_gradLift, gpu.d_Minv, nE, nmodes);
+
+    // --- Compute drag gradient into d_dJdUcoeff ---
+    double dragNx = std::cos(AoA_rad), dragNy = std::sin(AoA_rad);
+    DA_CUDA_CHECK(cudaMemset(da.d_adjRhsCoeff, 0, coeffSize * sizeof(double)));
+    daObjectiveGradientCoeffKernel<<<nE, bk>>>(
+        gpu.d_Ucoeff, da.d_adjRhsCoeff,
+        gpu.d_faceNx, gpu.d_faceNy, gpu.d_faceJac,
+        gpu.d_elem2face, gpu.d_face_elemL, gpu.d_face_elemR,
+        gpu.d_face_bcType,
+        nE, P1, nq1d, nmodes, gpu.nqFace,
+        normalization, dragNx, dragNy);
+
+    daMassSolveModalKernel<<<nE, bk2>>>(
+        da.d_adjRhsCoeff, da.d_dJdUcoeff, gpu.d_Minv, nE, nmodes);
+
+    // dJ/dU = (1/Cd)*dCl/dU - (Cl/Cd^2)*dCd/dU
+    double a = 1.0 / Cd;
+    double b = -Cl / (Cd * Cd);
+    int gd = (coeffSize + 255) / 256;
+    daLinearCombineKernel<<<gd, 256>>>(a, d_gradLift, b, da.d_dJdUcoeff,
+                                       da.d_dJdUcoeff, coeffSize);
+
+    DA_CUDA_CHECK(cudaFree(d_gradLift));
+}
+
+// ============================================================================
+
 void discreteAdjointComputeRHS(DiscreteAdjointGPUData& da,
                                const GPUSolverData& gpu,
                                bool usePsiTmp)

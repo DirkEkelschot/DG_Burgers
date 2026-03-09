@@ -1868,6 +1868,114 @@ void adjointComputeObjectiveGradient(AdjointGPUData& adj, const GPUSolverData& g
     }
 }
 
+// ============================================================================
+// Lift-over-Drag objective: J = Cl / Cd
+// ============================================================================
+
+__global__ void adjLinearCombineKernel(double a, const double* __restrict__ A,
+                                       double b, const double* __restrict__ B,
+                                       double* __restrict__ C, int n)
+{
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) C[i] = a * A[i] + b * B[i];
+}
+
+double adjointComputeLiftOverDrag(AdjointGPUData& adj, const GPUSolverData& gpu,
+                                  double chordRef, double AoA_rad,
+                                  double& Cl_out, double& Cd_out)
+{
+    double liftNx = -std::sin(AoA_rad), liftNy = std::cos(AoA_rad);
+    double dragNx =  std::cos(AoA_rad), dragNy = std::sin(AoA_rad);
+    Cl_out = adjointComputeForceCoeff(adj, gpu, chordRef, liftNx, liftNy);
+    Cd_out = adjointComputeForceCoeff(adj, gpu, chordRef, dragNx, dragNy);
+    return Cl_out / Cd_out;
+}
+
+void adjointComputeLiftOverDragGradient(AdjointGPUData& adj, const GPUSolverData& gpu,
+                                        double chordRef, double AoA_rad)
+{
+    double Cl, Cd;
+    adjointComputeLiftOverDrag(adj, gpu, chordRef, AoA_rad, Cl, Cd);
+
+    int nE = gpu.nE, P1 = gpu.P1, nq1d = gpu.nq1d;
+    int nmodes = gpu.nmodes, nqVol = gpu.nqVol, totalDOF = gpu.totalDOF;
+    double Vinf2 = gpu.uInf*gpu.uInf + gpu.vInf*gpu.vInf;
+    double normalization = 0.5 * gpu.rhoInf * Vinf2 * chordRef;
+    if (normalization < 1e-30) normalization = 1.0;
+
+    int coeffSize = NVAR_GPU * nE * nmodes;
+    int bk = std::max(64, NVAR_GPU * nmodes);
+    if (bk % 32 != 0) bk = ((bk + 31) / 32) * 32;
+
+    bool modal = adj.modalMode;
+    int gradSize = modal ? coeffSize : (NVAR_GPU * totalDOF);
+
+    double* d_gradLift = nullptr;
+    ADJ_CUDA_CHECK(cudaMalloc(&d_gradLift, gradSize * sizeof(double)));
+
+    // --- Compute lift gradient ---
+    double liftNx = -std::sin(AoA_rad), liftNy = std::cos(AoA_rad);
+    ADJ_CUDA_CHECK(cudaMemset(adj.d_adjRhsCoeff, 0, coeffSize * sizeof(double)));
+    objectiveGradientCoeffKernel<<<nE, bk>>>(
+        gpu.d_Ucoeff, adj.d_adjRhsCoeff,
+        gpu.d_faceNx, gpu.d_faceNy, gpu.d_faceJac,
+        gpu.d_elem2face, gpu.d_face_elemL, gpu.d_face_elemR,
+        gpu.d_face_bcType,
+        nE, P1, nq1d, nmodes, gpu.nqFace,
+        normalization, liftNx, liftNy, nullptr);
+
+    if (modal) {
+        int bk2 = std::max(64, NVAR_GPU * nmodes);
+        if (bk2 % 32 != 0) bk2 = ((bk2 + 31) / 32) * 32;
+        adjointMassSolveModalKernel<<<nE, bk2>>>(
+            adj.d_adjRhsCoeff, d_gradLift, gpu.d_Minv, nE, nmodes);
+    } else {
+        int bk2 = std::max(64, NVAR_GPU * nmodes);
+        if (bk2 % 32 != 0) bk2 = ((bk2 + 31) / 32) * 32;
+        int smem2 = NVAR_GPU * nmodes * sizeof(double);
+        adjointMSBKernel<<<nE, bk2, smem2>>>(
+            adj.d_adjRhsCoeff, d_gradLift, gpu.d_Minv,
+            nE, P1, nq1d, nmodes, nqVol, totalDOF, nullptr);
+    }
+
+    // --- Compute drag gradient into the final destination ---
+    double dragNx = std::cos(AoA_rad), dragNy = std::sin(AoA_rad);
+    ADJ_CUDA_CHECK(cudaMemset(adj.d_adjRhsCoeff, 0, coeffSize * sizeof(double)));
+    objectiveGradientCoeffKernel<<<nE, bk>>>(
+        gpu.d_Ucoeff, adj.d_adjRhsCoeff,
+        gpu.d_faceNx, gpu.d_faceNy, gpu.d_faceJac,
+        gpu.d_elem2face, gpu.d_face_elemL, gpu.d_face_elemR,
+        gpu.d_face_bcType,
+        nE, P1, nq1d, nmodes, gpu.nqFace,
+        normalization, dragNx, dragNy, nullptr);
+
+    double* d_gradDst = modal ? adj.d_dJdUcoeff : adj.d_dJdU;
+    if (modal) {
+        int bk2 = std::max(64, NVAR_GPU * nmodes);
+        if (bk2 % 32 != 0) bk2 = ((bk2 + 31) / 32) * 32;
+        adjointMassSolveModalKernel<<<nE, bk2>>>(
+            adj.d_adjRhsCoeff, d_gradDst, gpu.d_Minv, nE, nmodes);
+    } else {
+        int bk2 = std::max(64, NVAR_GPU * nmodes);
+        if (bk2 % 32 != 0) bk2 = ((bk2 + 31) / 32) * 32;
+        int smem2 = NVAR_GPU * nmodes * sizeof(double);
+        adjointMSBKernel<<<nE, bk2, smem2>>>(
+            adj.d_adjRhsCoeff, d_gradDst, gpu.d_Minv,
+            nE, P1, nq1d, nmodes, nqVol, totalDOF, nullptr);
+    }
+
+    // d_gradDst now has dCd/dU, d_gradLift has dCl/dU
+    // dJ/dU = (1/Cd)*dCl/dU - (Cl/Cd^2)*dCd/dU
+    double a = 1.0 / Cd;
+    double b = -Cl / (Cd * Cd);
+    int gd = (gradSize + 255) / 256;
+    adjLinearCombineKernel<<<gd, 256>>>(a, d_gradLift, b, d_gradDst, d_gradDst, gradSize);
+
+    ADJ_CUDA_CHECK(cudaFree(d_gradLift));
+}
+
+// ============================================================================
+
 void adjointComputeRHS(AdjointGPUData& adj, const GPUSolverData& gpu, bool usePsiTmp)
 {
     const double* d_psi_in = usePsiTmp ? adj.d_psiTmp : adj.d_psi;
@@ -2172,6 +2280,18 @@ void adjointCopyQuadPointsToHost(AdjointGPUData& adj, const GPUSolverData& gpu,
 void adjointCopySolutionToDevice(AdjointGPUData& adj, const double* psi_flat, int N)
 {
     ADJ_CUDA_CHECK(cudaMemcpy(adj.d_psi, psi_flat, N * sizeof(double), cudaMemcpyHostToDevice));
+}
+
+void adjointCopyEpsilonToHost(AdjointGPUData& adj, const GPUSolverData& gpu, double* eps_host)
+{
+    ADJ_CUDA_CHECK(cudaMemcpy(eps_host, adj.d_adjEpsilon,
+                   gpu.nE * sizeof(double), cudaMemcpyDeviceToHost));
+}
+
+void adjointCopySensorToHost(AdjointGPUData& adj, const GPUSolverData& gpu, double* sensor_host)
+{
+    ADJ_CUDA_CHECK(cudaMemcpy(sensor_host, adj.d_adjSensor,
+                   gpu.nE * sizeof(double), cudaMemcpyDeviceToHost));
 }
 
 // ============================================================================

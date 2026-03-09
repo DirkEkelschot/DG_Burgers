@@ -232,6 +232,7 @@ Inputs2D* ReadXmlFile2D(const char* filename)
     if (param_map.count("AVs0"))             inp->AVs0       = std::stod(param_map["AVs0"]);
     if (param_map.count("AVkappa"))          inp->AVkappa    = std::stod(param_map["AVkappa"]);
     if (param_map.count("AVscale"))          inp->AVscale    = std::stod(param_map["AVscale"]);
+    if (param_map.count("AVfreezeAfter"))   inp->AVfreezeAfter = std::stoi(param_map["AVfreezeAfter"]);
 
     if (param_map.count("AdjointMaxIter"))   inp->adjMaxIter   = std::stoi(param_map["AdjointMaxIter"]);
     if (param_map.count("AdjointTolerance")) inp->adjTol       = std::stod(param_map["AdjointTolerance"]);
@@ -240,7 +241,15 @@ Inputs2D* ReadXmlFile2D(const char* filename)
         std::string val = param_map["AdjointFDCheck"];
         inp->adjFDCheck = (val == "1" || val == "true" || val == "True");
     }
-    if (param_map.count("AdjointObjective")) inp->adjObjective = param_map["AdjointObjective"];
+    if (param_map.count("AdjointObjective")) {
+        inp->adjObjective = param_map["AdjointObjective"];
+        if (inp->adjObjective != "Lift" && inp->adjObjective != "Drag" &&
+            inp->adjObjective != "LiftOverDrag") {
+            std::cerr << "ERROR: AdjointObjective must be Lift, Drag, or LiftOverDrag (got '"
+                      << inp->adjObjective << "')" << std::endl;
+            exit(1);
+        }
+    }
     if (param_map.count("AdjointRestartFile")) inp->adjRestartFile = param_map["AdjointRestartFile"];
     if (param_map.count("RunAdjoint")) {
         std::string val = param_map["RunAdjoint"];
@@ -261,6 +270,16 @@ Inputs2D* ReadXmlFile2D(const char* filename)
     if (param_map.count("OptNBumpsLower"))   inp->optNBumpsLower = std::stoi(param_map["OptNBumpsLower"]);
     if (param_map.count("OptFDEpsilon"))     inp->optFDEpsilon   = std::stod(param_map["OptFDEpsilon"]);
     if (param_map.count("BaseMeshFile"))     inp->baseMeshFile   = param_map["BaseMeshFile"];
+
+    if (param_map.count("ImplicitCFLStart")) inp->implCFLStart   = std::stod(param_map["ImplicitCFLStart"]);
+    if (param_map.count("ImplicitCFLMax"))   inp->implCFLMax     = std::stod(param_map["ImplicitCFLMax"]);
+    if (param_map.count("ImplicitCFLGrowth"))inp->implCFLGrowth  = std::stod(param_map["ImplicitCFLGrowth"]);
+    if (param_map.count("NewtonMaxIter"))    inp->newtonMaxIter  = std::stoi(param_map["NewtonMaxIter"]);
+    if (param_map.count("NewtonTol"))        inp->newtonTol      = std::stod(param_map["NewtonTol"]);
+    if (param_map.count("GMRESRestart"))     inp->gmresRestart   = std::stoi(param_map["GMRESRestart"]);
+    if (param_map.count("GMRESTol"))         inp->gmresTol       = std::stod(param_map["GMRESTol"]);
+    if (param_map.count("SteadyTol"))        inp->steadyTol      = std::stod(param_map["SteadyTol"]);
+    if (param_map.count("Preconditioner"))   inp->preconditioner = param_map["Preconditioner"];
 
     if (inp->nquad == 0)
         inp->nquad = inp->porder + 1;
@@ -311,6 +330,17 @@ Inputs2D* ReadXmlFile2D(const char* filename)
         std::cout << "OptFDEpsilon    = " << inp->optFDEpsilon   << std::endl;
         if (!inp->baseMeshFile.empty())
             std::cout << "BaseMeshFile    = " << inp->baseMeshFile << std::endl;
+    }
+    if (inp->timescheme == "BackwardEuler") {
+        std::cout << "ImplCFLStart    = " << inp->implCFLStart  << std::endl;
+        std::cout << "ImplCFLMax      = " << inp->implCFLMax    << std::endl;
+        std::cout << "ImplCFLGrowth   = " << inp->implCFLGrowth << std::endl;
+        std::cout << "NewtonMaxIter   = " << inp->newtonMaxIter << std::endl;
+        std::cout << "NewtonTol       = " << inp->newtonTol     << std::endl;
+        std::cout << "GMRESRestart    = " << inp->gmresRestart  << std::endl;
+        std::cout << "GMRESTol        = " << inp->gmresTol      << std::endl;
+        std::cout << "SteadyTol       = " << inp->steadyTol     << std::endl;
+        std::cout << "Preconditioner  = " << inp->preconditioner<< std::endl;
     }
     std::cout << "===================================================" << std::endl;
 

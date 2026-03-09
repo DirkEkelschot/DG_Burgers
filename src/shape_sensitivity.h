@@ -31,6 +31,28 @@ std::vector<double> computeShapeGradient(
     double fdEpsilon,
     double baselineJ);
 
+// Overload for L/D objective: J = Cl/Cd.
+// AoA_rad is used to derive both lift and drag force directions internally.
+std::vector<double> computeShapeGradientLoverD(
+    GPUSolverData& gpu,
+    DiscreteAdjointGPUData& da,
+    Mesh2D& mesh,
+    const std::vector<std::array<double, 2>>& baselineNodes,
+    const GeomData2D& baselineGeom,
+    const HicksHenneParam& hh,
+    const std::vector<double>& alpha,
+    const std::vector<WallNodeInfo>& wallNodes,
+    MeshDeformer& deformer,
+    const std::vector<double>& xiVol,
+    const std::vector<double>& etaVol,
+    int nqVol,
+    const std::vector<double>& zFace,
+    int nqFace,
+    double chordRef,
+    double AoA_rad,
+    double fdEpsilon,
+    double baselineJ);
+
 // GPU dot product: sum_i a[i] * b[i], for vectors of length N on device.
 double gpuDotProduct(const double* d_a, const double* d_b, int N);
 
